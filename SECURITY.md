@@ -2,7 +2,7 @@
 
 ## Status and supported scope
 
-Ephemeral is an invite-only pilot implementation licensed under [MIT](LICENSE). Publication remains pending. There is no security audit, supported stable release line, or guaranteed response time. Security fixes are evaluated against the current pilot code; older snapshots are not maintained release branches.
+Ephemeral is an invite-only pilot implementation licensed under [MIT](LICENSE). Public publication and GitHub CI remain pending; the sanitized source and reviewed fixes are on `main` in the private `scasella/ephemeral` repository. There is no security audit, supported stable release line, or guaranteed response time. Security fixes are evaluated against the current pilot code; older snapshots are not maintained release branches.
 
 The owner has kept contact setup pending. [Support](docs/SUPPORT.md) and [retention](docs/RETENTION.md) are explicit drafts; neither establishes an active inbox, staffed response commitment or implemented content-purge service.
 
@@ -12,7 +12,7 @@ VM destruction removes remaining local credential files, but does not establish 
 
 ## Reporting a vulnerability
 
-GitHub private vulnerability reporting has not been enabled or verified for the intended repository. There is no verified private reporting address in this project. Before public publication, the maintainer must select and test a private reporting contact and update this section. GitHub's built-in private reporting is available for public repositories: enable and test it as part of an explicitly authorized visibility change, then document the working route before announcing the release. See [GitHub's configuration instructions](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository). Do not describe a reporting route as available before testing it.
+GitHub private vulnerability reporting has not been enabled or verified for `scasella/ephemeral`, which remains private. There is no verified private reporting address in this project. Before public publication, the maintainer must select and test a private reporting contact and update this section. GitHub's built-in private reporting is available for public repositories: enable and test it as part of an explicitly authorized visibility change, then document the working route before announcing the release. See [GitHub's configuration instructions](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository). Do not describe a reporting route as available before testing it.
 
 Until a private route is documented, keep suspected vulnerabilities and exploit details private. Do not open a public issue, pull request, or discussion containing them. Routine non-sensitive bugs can use the issue templates once the repository is published.
 

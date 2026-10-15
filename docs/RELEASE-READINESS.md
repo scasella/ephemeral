@@ -1,12 +1,12 @@
 # Release readiness
 
-This is a local publication candidate for `scasella/ephemeral`, licensed under [MIT](../LICENSE) with copyright credited to scasella. GitHub publication remains pending. No public hosted service is represented by this source tree.
+The sanitized source and reviewed fixes are committed to `main` in the private GitHub repository `scasella/ephemeral`. This is an experimental local source-release candidate licensed under [MIT](../LICENSE), with copyright credited to scasella. Public publication and GitHub CI remain pending. No public hosted service is represented by this source tree.
 
 ## Source preparation
 
 The publication tree has a fresh root history using the owner's verified GitHub noreply identity. It contains no original ancestors or local editor snapshot refs. Original history, detailed live-test records and screenshots are retained privately outside this publication checkout. One reviewed synthetic local-preview overview remains. Public validation describes observations without publishing private repository URLs, operational resource IDs, exact test timelines or personal contact details.
 
-The release review repaired generation-specific private Preview origins, required the reviewed head/base pair before PR creation, made local database locking fail closed, and separated PostgreSQL passwords from connection URLs. Node 24, pinned dependencies/base image, contributor guidance and CI are prepared. See [validation](VALIDATION.md).
+The release review repaired generation-specific private Preview origins, required the reviewed head/base pair before PR creation, made local database locking fail closed, and separated PostgreSQL passwords from connection URLs. Node 24, pinned dependencies/base image, contributor guidance and CI are prepared. Local validation of the reviewed runtime passed; GitHub CI has not run for that commit. See [validation](VALIDATION.md#reviewed-private-main).
 
 ## Local release scope and evidence
 
@@ -16,12 +16,12 @@ The [clean-checkout test](VALIDATION.md#clean-checkout-local-live-acceptance) pa
 
 ## Remaining local source-release blockers
 
-- The owner explicitly authorizes repository creation/publication. MIT licensing is selected; preserve its copyright and permission notice. Keep `package.json` private to prevent accidental npm publication.
+- Obtain the owner's explicit authorization to change the existing private repository to public. Private repository creation and the reviewed push to `main` are complete; they do not authorize public visibility. MIT licensing is selected; preserve its copyright and permission notice. Keep `package.json` private to prevent accidental npm publication.
 - Establish and test a private security contact; contact setup is deliberately pending. See [SECURITY](../SECURITY.md) and the [support draft](SUPPORT.md).
-- Review the exact sanitized commit, run its redacted full-history/candidate scan, and run GitHub CI after repository creation is authorized. Configure branch protection and available repository security controls before announcement.
+- Review the exact sanitized publication commit and run its redacted full-history/candidate scan. The reviewed private `main` passed local checks and its exact-commit scan; later edits need their own scan. GitHub CI remains pending at the owner's request. Run it when authorized, then configure required checks, branch protection and available repository security controls before announcement.
 - Publish only this reviewed history. Do not attach an original-history bundle, private evidence, operational files, or local editor refs.
 
-These gates still apply even when users supply their own cloud accounts. MIT licensing resolves the license choice; it does not authorize publication. The README's request for visible credit is optional and adds no license condition. Documentation edits require another final exact-commit review/scan; a previous clean result does not cover a later commit. No repository creation, visibility change, tag, release, npm publication or paid hosting is authorized here.
+These gates still apply even when users supply their own cloud accounts. MIT licensing resolves the license choice; it does not authorize publication. The README's request for visible credit is optional and adds no license condition. Documentation edits require another final exact-commit review/scan; a previous clean result does not cover a later commit. This checklist does not authorize a visibility change, tag, release, npm publication or paid hosting.
 
 ## Local pilot limitations to disclose
 

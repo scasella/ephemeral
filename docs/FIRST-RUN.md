@@ -1,6 +1,6 @@
 # First run: real E2B sessions from your computer
 
-This setup runs the control plane on your own computer and coding sessions in your E2B account. It needs no hosted application service or domain purchase. It is separate from `npm run local`, which always runs simulation. The project is licensed under [MIT](../LICENSE); GitHub publication remains pending.
+This setup runs the control plane on your own computer and coding sessions in your E2B account. It needs no hosted application service or domain purchase. It is separate from `npm run local`, which always runs simulation. The project is licensed under [MIT](../LICENSE). Its sanitized source and reviewed fixes are on `main` in the private `scasella/ephemeral` repository; public publication and GitHub CI remain pending.
 
 ## Start the guide
 

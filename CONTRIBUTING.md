@@ -1,6 +1,6 @@
 # Contributing
 
-GitHub publication is pending. The `package.json` repository URL records the intended destination, `scasella/ephemeral`; it does not establish that the repository is public. The project is licensed under [MIT](LICENSE); preserve its copyright and permission notice when redistributing copies or substantial portions. No separate contributor agreement is supplied by this guide.
+The sanitized source and reviewed fixes are committed to `main` in the private GitHub repository `scasella/ephemeral`. Public publication and GitHub CI remain pending. The `package.json` repository URL identifies that repository; its `private: true` setting prevents npm publication and does not control GitHub visibility. The project is licensed under [MIT](LICENSE); preserve its copyright and permission notice when redistributing copies or substantial portions. No separate contributor agreement is supplied by this guide.
 
 ## Local setup
 
@@ -56,7 +56,7 @@ npm run test:container
 npm run test:container:context
 ```
 
-The Docker build context uses an allowlist of build inputs and excludes private configuration and data directories at every depth. The container test first exports a synthetic context with Docker and verifies that nested private files cannot enter builder layers, then checks the packaged runtime. The runner does not load `.env` or require host `node_modules`. It checks privilege drop, disk permissions and persistence, startup safeguards, built assets and authentication fences, real PostgreSQL migrations/locking, restart and SIGTERM. It pulls the Compose PostgreSQL image if needed and uses generated test configuration, disposable volumes, an internal Docker network, and no published host ports. It removes test resources and leaves images cached. See [the local container report](docs/VALIDATION.md). CI runs the same suite without publishing images or deploying resources; an actual GitHub CI run remains pending publication. This is local runtime evidence, not a real E2B/GitHub or hosted acceptance test.
+The Docker build context uses an allowlist of build inputs and excludes private configuration and data directories at every depth. The container test first exports a synthetic context with Docker and verifies that nested private files cannot enter builder layers, then checks the packaged runtime. The runner does not load `.env` or require host `node_modules`. It checks privilege drop, disk permissions and persistence, startup safeguards, built assets and authentication fences, real PostgreSQL migrations/locking, restart and SIGTERM. It pulls the Compose PostgreSQL image if needed and uses generated test configuration, disposable volumes, an internal Docker network, and no published host ports. It removes test resources and leaves images cached. See [the local container report](docs/VALIDATION.md). CI is configured to run the same suite without publishing images or deploying resources; an actual GitHub CI run remains pending at the owner's request. This is local runtime evidence, not a real E2B/GitHub or hosted acceptance test.
 
 ## Scope and review
 

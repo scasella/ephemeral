@@ -1,6 +1,6 @@
 # Release and publication procedure
 
-This is a prepared procedure, not an authorization to publish or deploy. The owner selected the [MIT License](../LICENSE), with copyright credited to scasella, and kept **publication pending**. The intended source repository is `scasella/ephemeral`; it has not been created by this work. Keep `package.json` private and do not run `npm publish`.
+This is a prepared procedure, not an authorization to make the repository public or deploy a service. The sanitized source and reviewed fixes are committed to `main` in the **private** GitHub repository `scasella/ephemeral`. The owner selected the [MIT License](../LICENSE), with copyright credited to scasella. **Public publication and GitHub CI remain pending.** Keep `package.json` private and do not run `npm publish`; that package setting does not control GitHub repository visibility.
 
 Use only the separate sanitized publication checkout and its reviewed `main` history. Original history and private evidence are archived outside it. Never mirror-push the original repository, import its ancestors/editor refs, or attach private bundles and receipts to a release. Any future edits require a new exact-commit scan.
 
@@ -8,7 +8,7 @@ Use only the separate sanitized publication checkout and its reviewed `main` his
 
 For the intended local source release, start with [local release blockers and pilot limitations](RELEASE-READINESS.md#remaining-local-source-release-blockers). The real [clean-checkout acceptance](VALIDATION.md#clean-checkout-local-live-acceptance) passed the core local flow using the documented Cloudflare fallback. MIT licensing is selected separately; the test does not supply a working private security contact, GitHub CI, or evidence for unexecuted expiry/crash/upstream-revocation checks. Hosted acceptance below is a separate deployment decision.
 
-Use Node 24, Git, and `openssl`. From a clean checkout without integration configuration:
+Use Node 24, npm, Git, Python 3, and `openssl`. The process-containment tests also need `tmux` and `ps`; see [contributor prerequisites](../CONTRIBUTING.md#local-setup) for Linux packages and container process-group setup. From a clean checkout without integration configuration:
 
 ```sh
 npm ci
@@ -31,7 +31,7 @@ npm run test:container
 
 The smoke runner needs only Node and Docker on the host; it does not install host dependencies or load `.env`. It tests packaged modules and assets, UID 1000/umask, mounted-disk repair and persistence, embedded database reopen, rejected startup configurations, production HTTP/authentication fences, a real PostgreSQL connection and singleton lock, restart, and graceful SIGTERM. It pulls `postgres:17-bookworm` if missing, generates test-only configuration, publishes no host ports, and blocks external container access with an internal Docker network. Its temporary containers, volumes, and network are removed on completion. Built/pulled images remain cached. Optional image arguments: `npm run test:container -- ephemeral:ci postgres:17-bookworm`.
 
-Local Docker validation now passes; see [the container test report](VALIDATION.md) for platforms and evidence. CI runs the same suite but has not run on GitHub while publication is pending. These tests use no real E2B/GitHub credentials and do not establish hosted lifecycle acceptance.
+Local Docker validation passes; see [reviewed private-main validation](VALIDATION.md#reviewed-private-main) for current evidence and the historical reports for earlier platforms. CI is configured to run the same suite, but GitHub CI remains pending at the owner's request. The private-main pushes used a CI-skip marker; they are not hosted-CI evidence. These tests use no real E2B/GitHub credentials and do not establish hosted lifecycle acceptance.
 
 ## Private Preview migration
 
@@ -54,13 +54,13 @@ Compose now passes the raw password through `PGPASSWORD` and uses a password-fre
 
 ## GitHub publication gate
 
-Before any push or public visibility change:
+Before changing repository visibility or announcing a public release:
 
 - The owner explicitly approves publication. Retain the selected MIT License, copyright notice and matching package metadata. The README's visible-credit request is optional; do not present it as an additional license condition. No separate contributor agreement is supplied.
 - Review source, history, documentation images, author metadata, and release notes for information the owner intends to disclose. Re-run the redacted history/candidate scan on the exact publication commit. Never publish `.env`, private keys, `.data`, database backups, raw logs, or credential-aware test receipts.
 - Establish a tested private security contact. GitHub's [private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository) requires a public repository; enable/test it at the authorized visibility change and update SECURITY before announcing.
-- Confirm the repository name still belongs to your GitHub account and the selected visibility. Use a private preparation repository first if authorized; do not create or change one automatically from this document.
-- Run all CI jobs on GitHub, including the presently unrun container job, and require their exact checks on the default branch. Verify branch protection, secret scanning/push protection when available, repository security settings, and maintainer permissions in that repository. No such account settings were changed during local preparation.
+- Confirm that `scasella/ephemeral` still belongs to the intended GitHub account and is private before the separately authorized visibility change. Continue from its reviewed `main`; do not create a replacement repository or import the original private history.
+- GitHub CI remains pending at the owner's request. When authorized, run all jobs, including the container job, and require their exact checks on `main`. Branch protection and available secret scanning/push protection, repository security settings, and maintainer permissions still need verification/configuration before announcement. The documentation update does not activate CI or change account settings.
 - Create the initial tag/release from the reviewed commit only after the gates pass. Use the actual license and pilot limitations; do not label this a generally available hosted service or imply upstream Codex revocation is proven.
 
 Public source publication and hosted public access are separate decisions. A GitHub release must not apply `render.yaml`, expose listeners, spend money, build a paid E2B template, or invite accounts automatically. CI intentionally has no deployment/publishing credentials or steps.

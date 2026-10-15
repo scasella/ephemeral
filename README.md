@@ -4,7 +4,7 @@ Disposable cloud coding sessions: a fresh microVM, a fresh ChatGPT/Codex sign-in
 
 ## Release status
 
-Ephemeral is a self-hosted, invite-only pilot licensed under [MIT](LICENSE). GitHub publication to `scasella/ephemeral` is **pending**. No hosted public service has been deployed. Source remains local; `private: true` prevents accidental npm publication.
+Ephemeral is a self-hosted, invite-only pilot licensed under [MIT](LICENSE). The sanitized source and reviewed fixes are committed to `main` in the **private** GitHub repository `scasella/ephemeral`. Public publication and GitHub CI remain **pending**. No hosted public service has been deployed. The package setting `private: true` prevents accidental npm publication; it does not control GitHub repository visibility.
 
 The release review repaired cross-generation Preview isolation, enforced the reviewed head/base pair for PR creation, and hardened local database locking and Compose password handling. See [release readiness and remaining gates](docs/RELEASE-READINESS.md), [release notes](CHANGELOG.md), [contributor setup](CONTRIBUTING.md), and [security reporting status](SECURITY.md).
 

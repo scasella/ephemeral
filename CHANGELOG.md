@@ -2,7 +2,7 @@
 
 ## Unreleased — initial pilot publication candidate
 
-The project uses the MIT License with copyright credited to scasella. Publication remains pending. No GitHub release, npm package, or hosted deployment is represented by this entry.
+The project uses the MIT License with copyright credited to scasella. The sanitized source and reviewed fixes are committed to `main` in the private `scasella/ephemeral` repository. Public publication and GitHub CI remain pending. No GitHub release, npm package, or hosted deployment is represented by this entry.
 
 - MIT licensing: retained copyright/license notice required, with an optional request for visible project credit and matching package metadata. No additional attribution condition or npm publication is introduced.
 - Network entry hardening: terminal and Preview upgrades handle socket resets during authorization and stop abandoned handshakes; live startup requires production serving, and control-plane URLs use canonical origins with strict input validation. Local regression tests cover reset survival, cancellation, capacity recovery and startup boundaries.
@@ -19,7 +19,6 @@ The project uses the MIT License with copyright credited to scasella. Publicatio
 
 - Local release fixes: bound anonymous OAuth admission before database work, index and batch expiry pruning, align JSON byte limits with accepted PR text and return explicit parser errors, reject unsafe labels, and make hidden Unicode visible in review surfaces. Changes distinguishes supported EOL normalization from raw comparisons.
 - Final review fixes: share Unicode shell-name validation between browser and server, apply selected operator PostgreSQL credentials/TLS defaults, and recheck local session authority after final PR preflight. Docker accepts only build inputs and recursively excludes private configuration/data; synthetic context export and real PostgreSQL recovery checks cover these boundaries. Contributor prerequisites now include Python 3.
-
 
 - Publication privacy: fresh noreply-attributed history, private evidence retained outside the public tree, synthetic examples, explicit disposable smoke-fixture selection, and no editor snapshot refs.
 - Hosting preparation: Sites compatibility assessment, host-specific acceptance procedure and explicit retention/support drafts with contact setup pending.

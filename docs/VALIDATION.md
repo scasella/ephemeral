@@ -2,6 +2,21 @@
 
 This public summary omits private test-repository names, PR links, resource identifiers, exact timelines and live screenshots. Unredacted historical evidence remains in private operator storage. No identifier or screenshot was replaced with invented evidence.
 
+## Reviewed private main
+
+The sanitized source and reviewed fixes were merged into `main` in the private `scasella/ephemeral` repository at `c4dfb8659a3e25fdc068a05a5a50c923a31ef220`. Public publication and GitHub CI remain pending. The CI-skip marker on that commit prevented the private pushes from starting GitHub CI; no hosted-CI result is claimed.
+
+Local verification of that exact runtime candidate passed:
+
+- 1,388 tests across 100 files, with one intentionally skipped interactive browser hold; TypeScript checking and the production build passed.
+- 127 selected regression checks in an offline Linux container under a non-root user.
+- 34 container checks, including real disposable PostgreSQL, recovery configuration precedence, singleton ownership, restart and shutdown. The Docker context check admitted 19 synthetic build inputs and excluded 94 private/unrelated fixtures.
+- A redacted scan of the exact commit and all five sanitized commits, plus all 292 tracked candidate files, with no configured secret-rule matches. A refreshed locked-dependency advisory check reported zero vulnerabilities.
+
+All 64 packaged runtime and built files matched the reviewed checkout. Disposable containers, volumes, network and source export were removed; detailed receipts remain in ignored private storage outside the publication tree.
+
+These checks used synthetic account/provider adapters and disposable local resources. They did not repeat real E2B/GitHub/Codex acceptance on this revision or establish hosted readiness. The separate live tests below retain their original revision and coverage limits. Documentation-only updates after this runtime commit require an exact-commit secret scan; they do not turn these local results into GitHub CI or new live-account evidence.
+
 ## Recorded baseline
 
 The private baseline completed a clean Node 24 install, 821 passing tests across 63 files (one intentionally skipped interactive hold), TypeScript checking and a Vite production build. The lockfile advisory check and Gitleaks scan passed at the time of that review. These are historical observations; rerun checks on the exact candidate before publication.
