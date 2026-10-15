@@ -9,6 +9,10 @@
   },
   "type": "module",
   "scripts": {
+    "setup": "bash scripts/setup-local.sh",
+    "setup:local": "node --import tsx scripts/local-setup.ts",
+    "setup:doctor": "node --import tsx scripts/local-setup.ts doctor",
+    "live": "node --import tsx scripts/local-setup.ts start",
     "local": "node scripts/run-local.mjs",
     "test:local": "node --test scripts/local-launcher.check.mjs",
     "dev": "tsx watch server/index.ts",

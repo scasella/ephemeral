@@ -38,6 +38,8 @@ jobs:
         run: npm run test:ci
       - name: Verify local launch isolation
         run: npm run test:local
+      - name: Check guided setup shell
+        run: bash -n scripts/setup-local.sh && bash scripts/setup-local.sh --help
       - name: Verify disposable-fixture and cleanup-proof gates locally
         run: node --import tsx scripts/live-smoke.ts --self-test
       - name: Typecheck and build

@@ -1,5 +1,7 @@
 # Test real E2B from the local app
 
+For the guided setup path, start with [first-run setup](FIRST-RUN.md). This document retains the individual commands and the detailed real-session acceptance procedure.
+
 This path runs the control plane on your Mac and reaches it through an HTTPS tunnel. It creates **no Render service or database**. A real E2B template/sandbox and GitHub App are still required; provider usage and the user's Codex account limits apply. Preparation is not evidence that the live test passed.
 
 Historical local integration results are summarized in [validation](VALIDATION.md). Run the acceptance checks again against your own dedicated fixture; historical results do not establish a new deployment.

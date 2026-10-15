@@ -35,6 +35,16 @@ For the publication secret check, install the pinned Gitleaks version described 
 
 ## Enable real sessions
 
+For guided first-run setup, use Node 24 and run:
+
+```sh
+npm ci
+npm run setup
+npm run live
+```
+
+The guide prepares private configuration, walks through an HTTPS tunnel and your own GitHub App, and offers reuse or an explicitly approved E2B template build. Account sign-in and GitHub permissions remain your choices. See [first-run setup](docs/FIRST-RUN.md) for prerequisites, costs, resume behavior and verification. `npm run local` remains simulation only.
+
 For a real E2B smoke test while the control plane stays on your Mac, follow [local live testing](docs/LOCAL-LIVE.md). It uses a separate production server and an HTTPS tunnel, with no Render resources.
 
 Copy `.env.example` to `.env` and configure:

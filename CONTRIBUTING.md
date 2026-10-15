@@ -15,6 +15,8 @@ Open <http://localhost:4310>. The local launcher explicitly selects simulation, 
 
 Run `npm run test:local` to check the launcher's mode, storage, credential and port isolation. Local simulation data persists across restarts; treat `.data/local-preview` as private and keep it out of source control.
 
+The real-account first-run guide is `npm run setup`; see [first-run setup](docs/FIRST-RUN.md). Its configuration, GitHub command gates and template-worker boundaries have synthetic tests in the regular suite. These tests do not register Apps, issue provider builds or authenticate Codex. `npm run setup:doctor -- --offline` checks an existing local configuration without account requests; the default doctor performs read-only upstream checks. No setup credential is needed in CI.
+
 Local preview development needs no account credentials. Keep live integration configuration in ignored local files and follow [local live testing](docs/LOCAL-LIVE.md) only when deliberately testing real resources. Never add `.env` files, private keys, tokens, browser cookies, credential-bearing URLs, production databases, or terminal transcripts to a contribution.
 
 ## Validate a change
