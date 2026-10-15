@@ -18,10 +18,12 @@ Use Node.js 24 LTS and Git.
 
 ```sh
 npm ci
-npm run dev
+npm run local
 ```
 
-Open http://localhost:4310. Missing integration configuration selects a **clearly labeled local preview**. Preview uses the real session lifecycle and embedded PostgreSQL, but simulates the VM and cleanup. The preview terminal does not execute commands, and preview never creates GitHub PRs. It binds only to loopback and cannot run with `NODE_ENV=production`.
+Open http://localhost:4310. `npm run local` explicitly selects the **clearly labeled local simulation**, uses a separate database at `.data/local-preview`, and clears integration credentials from the server's environment. No account, domain, tunnel, Docker service, or paid host is needed. It preserves any live configuration files and data. If port 4310 is occupied, run `npm run local -- --port 4311`.
+
+Simulation uses the real session lifecycle and embedded PostgreSQL, but simulates the VM and cleanup. The terminal does not execute commands or produce real Codex responses, and simulation never creates GitHub PRs. It binds only to loopback. Use `npm run dev` for ordinary source watching; real cloud sessions are a separate opt-in flow below.
 
 ```sh
 npm run test:ci

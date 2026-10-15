@@ -36,6 +36,8 @@ jobs:
         run: npm ci
       - name: Run bounded local tests
         run: npm run test:ci
+      - name: Verify local launch isolation
+        run: npm run test:local
       - name: Verify disposable-fixture and cleanup-proof gates locally
         run: node --import tsx scripts/live-smoke.ts --self-test
       - name: Typecheck and build

@@ -8,10 +8,12 @@ Use Node.js 24 LTS, npm, Git, and `openssl` for the local private-preview tests.
 
 ```sh
 npm ci
-npm run dev
+npm run local
 ```
 
-Open <http://localhost:4310>. A clean checkout without integration configuration uses the labeled local preview. It simulates VM provisioning, terminal commands, GitHub mutations, and cleanup. It cannot demonstrate real Codex output or upstream credential revocation. The local preview binds to loopback and cannot run with `NODE_ENV=production`.
+Open <http://localhost:4310>. The local launcher explicitly selects simulation, clears integration credentials, and uses its own `.data/local-preview` database. For a second instance, use `npm run local -- --port 4311`. It simulates VM provisioning, terminal commands, GitHub mutations, and cleanup. It cannot demonstrate real Codex output or upstream credential revocation. The local preview binds to loopback. Use `npm run dev` for source watching with your chosen development configuration.
+
+Run `npm run test:local` to check the launcher's mode, storage, credential and port isolation. Local simulation data persists across restarts; treat `.data/local-preview` as private and keep it out of source control.
 
 Local preview development needs no account credentials. Keep live integration configuration in ignored local files and follow [local live testing](docs/LOCAL-LIVE.md) only when deliberately testing real resources. Never add `.env` files, private keys, tokens, browser cookies, credential-bearing URLs, production databases, or terminal transcripts to a contribution.
 

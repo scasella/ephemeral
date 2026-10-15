@@ -9,6 +9,8 @@
   },
   "type": "module",
   "scripts": {
+    "local": "node scripts/run-local.mjs",
+    "test:local": "node --test scripts/local-launcher.check.mjs",
     "dev": "tsx watch server/index.ts",
     "build": "tsc --noEmit && vite build",
     "start": "tsx server/index.ts",
