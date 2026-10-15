@@ -8,6 +8,28 @@ The private baseline completed a clean Node 24 install, 821 passing tests across
 
 Local Docker builds and 18 smoke checks passed on native Linux arm64 and emulated Linux amd64. The test database used native arm64 PostgreSQL. Checks covered packaged modules/assets, UID/GID 1000, private umask, disk repair/persistence, PGlite reopen, rejected startup modes, production authentication fences, PostgreSQL migrations and singleton locking, restart and graceful SIGTERM. This was local container evidence, not a hosted deployment.
 
+## Clean-checkout local live acceptance
+
+The guided-setup candidate `f784fe88f964080b82a51c661e00548b0b4017a9` was cloned into an independent checkout with no initial configuration, private state or dependencies. It received a fresh install/build using Node 24. Account credentials and generated state were kept in ignored private files. This was a real macOS arm64 local test with an E2B VM, not simulation or a hosted deployment.
+
+| Check | Observed result |
+|---|---|
+| First-run guide | Prepared private configuration/key/database, created a new private GitHub App and installed it only on a disposable repository. Required browser account checks were completed by the user. |
+| Tunnel and restart | ngrok's account request quota blocked that route. Official `cloudflared` 2026.10.0 provided a working Quick Tunnel. A later restart used a new hostname with coordinated private `PUBLIC_URL` and existing App callback updates. Local and public exact live-health checks passed without credentials. |
+| Account/template diagnostics | Read-only GitHub installation and E2B access/readiness checks passed. A ready clean template was reused; no template build or plan upgrade was performed. |
+| Real provisioning | App launch produced a matching real E2B sandbox with a unique assigned branch, 2 vCPU, 1024 MiB RAM and a one-hour provider deadline. |
+| GitHub and Git gateway | GitHub sign-in succeeded. A harmless fixture commit was pushed to the assigned branch. Main, unrelated-branch and assigned-branch-deletion probes received explicit gateway policy rejection; main was unchanged. |
+| Codex authentication and response | The user completed fresh device authentication in the VM. `codex login status` independently reported ChatGPT login. After folder trust, Codex CLI 0.162.1 displayed GPT-6.1-Sol and returned a useful read-only README/file-list explanation. No Mac auth cache was copied or credential files read. |
+| Terminal reconnect | Browser reconnection retained the same tmux pane/process and authenticated Codex session. A longer task was submitted successfully using terminal paste after reconnection. Input during disconnection was not treated as delivered. |
+| Published work | The app's checked comparison showed one published file, one commit ahead and zero behind. An independent pre-stop check found no changed, untracked or ignored workspace files, and local HEAD matched the remote session branch. |
+| Manual stop | The app reported VM destruction, GitHub-token cleanup, gateway cleanup and local Codex cleanup confirmed. A separate credential-aware check required the exact application rejection for the former gateway credential and independently confirmed E2B VM absence. |
+
+Codex showed two startup warnings: no system bubblewrap, with an explicit bundled-bubblewrap fallback, and an optional account-synced MCP app that was not authenticated. The read-only task succeeded; no extra MCP authorization or sandbox-protection bypass was performed. These are observed compatibility notes, not a security audit.
+
+This run did **not** test a fresh template build, draft PR creation, full-duration automatic expiry, live crash/fault recovery, independent replay of a former upstream GitHub installation token, remote Codex-token revocation, or private application Preview. Preview remained disabled. The app's GitHub/local-Codex cleanup report is distinct from the independent gateway/VM checks. The useful-response timing button was not clicked; an observed model reply is not a user-confirmation metric. Older PR/Preview results below must not be attributed to this run.
+
+A separate clean archive check of this candidate had 896 passing tests across 66 files, one intentional interactive-hold skip, and a passing typecheck/production build. Its redacted history/candidate scan found no configured secret-rule matches. These results apply to that candidate, not future edits. Private receipts and screenshots remain outside the publication tree; rerun final checks on the eventual release commit.
+
 ## Historical integration coverage
 
 Dedicated private fixtures exercised real E2B provisioning, a scoped private clone, fresh Codex device login and model output, terminal reconnect, permitted session-branch pushes, forbidden branch operations, draft PR handoff, supplemental shell, setup recipes, saved-work continuation and durable notes. UI checks covered terminal context, history, reminders, keyboard continuity, compact views, pushed-change review and private Preview readiness/HMR.
@@ -31,4 +53,4 @@ node --import tsx scripts/live-smoke.ts --self-test
 
 Use Node 24 and the pinned Gitleaks version from [CONTRIBUTING](../CONTRIBUTING.md). The live-smoke self-test uses local fixtures and makes no cloud/account changes. Actual live commands require an explicit `--fixture OWNER/REPO`, an isolated ignored configuration, and deliberately selected disposable resources. See [local live testing](LOCAL-LIVE.md).
 
-Fresh candidate check results belong in a private receipt keyed by the resulting commit. A successful local check does not substitute for [hosted acceptance](HOSTED-ACCEPTANCE.md), licensing, a tested support/security route or actual GitHub CI.
+Fresh candidate check results belong in a private receipt keyed by the resulting commit. A successful local check does not substitute for [hosted acceptance](HOSTED-ACCEPTANCE.md), license compliance, a tested support/security route or actual GitHub CI.

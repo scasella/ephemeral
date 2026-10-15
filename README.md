@@ -4,13 +4,19 @@ Disposable cloud coding sessions: a fresh microVM, a fresh ChatGPT/Codex sign-in
 
 ## Release status
 
-Ephemeral is a self-hosted, invite-only pilot. GitHub publication to `scasella/ephemeral` is **pending**, and no project license has been selected. No hosted public service has been deployed. Source remains local; `private: true` prevents accidental npm publication.
+Ephemeral is a self-hosted, invite-only pilot licensed under [MIT](LICENSE). GitHub publication to `scasella/ephemeral` is **pending**. No hosted public service has been deployed. Source remains local; `private: true` prevents accidental npm publication.
 
 The release review repaired cross-generation Preview isolation, enforced the reviewed head/base pair for PR creation, and hardened local database locking and Compose password handling. See [release readiness and remaining gates](docs/RELEASE-READINESS.md), [release notes](CHANGELOG.md), [contributor setup](CONTRIBUTING.md), and [security reporting status](SECURITY.md).
 
 This publication copy uses a fresh history and excludes private live-test reports/screenshots. See [validation scope](docs/VALIDATION.md), [hosting and Sites compatibility](docs/HOSTING.md), [hosted acceptance](docs/HOSTED-ACCEPTANCE.md), and the [retention](docs/RETENTION.md) and [support](docs/SUPPORT.md) drafts. Contact setup and policy activation remain pending.
 
 Compute teardown, local credential removal, and upstream revocation are independent outcomes. Remote ChatGPT/Codex token revocation remains **unverified**. This version must not be advertised as automatically revoking every upstream account credential.
+
+## License and credit
+
+Copyright (c) 2026 scasella. The [MIT License](LICENSE) requires retaining the copyright and permission notice in copies or substantial portions of this software. Dependencies retain their own licenses.
+
+If Ephemeral helps your project, a visible “Built with Ephemeral by scasella” credit is appreciated. This is an optional request, not an additional license condition; no UI badge or promotional credit is required.
 
 ## Run locally
 
@@ -45,9 +51,11 @@ npm run live
 
 The guide prepares private configuration, walks through an HTTPS tunnel and your own GitHub App, and offers reuse or an explicitly approved E2B template build. Account sign-in and GitHub permissions remain your choices. See [first-run setup](docs/FIRST-RUN.md) for prerequisites, costs, resume behavior and verification. `npm run local` remains simulation only.
 
+Real local use was verified from an independent clean checkout with GitHub sign-in, fresh Codex device login/output, scoped pushes, reconnect and manual teardown; see [the result and coverage limits](docs/VALIDATION.md#clean-checkout-local-live-acceptance). The [Cloudflare Quick Tunnel fallback](docs/FIRST-RUN.md#cloudflare-quick-tunnel-fallback) worked when ngrok hit its account quota. The wizard still displays ngrok instructions; follow the documented fallback and hostname/callback update steps. Users need their own GitHub App, template and private configuration in addition to an E2B key. No paid application host or owned domain is required for this local path.
+
 For a real E2B smoke test while the control plane stays on your Mac, follow [local live testing](docs/LOCAL-LIVE.md). It uses a separate production server and an HTTPS tunnel, with no Render resources.
 
-Copy `.env.example` to `.env` and configure:
+The guide manages `.env.live`; do not also create a competing configuration for that flow. For manual configuration without the guide, copy `.env.example` to `.env` and configure:
 
 1. An E2B Hobby account for one-hour sessions, API key, and a custom template containing Node, Git, Python3, tmux, Codex CLI, npm and pnpm. See [E2B setup](docs/E2B.md).
 2. A GitHub App with selected-repository access, Contents read/write and Pull requests read/write. Configure its callback as `https://YOUR_HOST/auth/github/callback`. See [GitHub setup](docs/GITHUB.md).

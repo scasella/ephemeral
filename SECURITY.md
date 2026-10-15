@@ -2,7 +2,7 @@
 
 ## Status and supported scope
 
-Ephemeral is an invite-only pilot implementation. Publication is pending, and no project license has been selected. There is no security audit, supported stable release line, or guaranteed response time. Security fixes are evaluated against the current pilot code; older snapshots are not maintained release branches.
+Ephemeral is an invite-only pilot implementation licensed under [MIT](LICENSE). Publication remains pending. There is no security audit, supported stable release line, or guaranteed response time. Security fixes are evaluated against the current pilot code; older snapshots are not maintained release branches.
 
 The owner has kept contact setup pending. [Support](docs/SUPPORT.md) and [retention](docs/RETENTION.md) are explicit drafts; neither establishes an active inbox, staffed response commitment or implemented content-purge service.
 

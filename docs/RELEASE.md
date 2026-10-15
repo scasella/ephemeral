@@ -1,10 +1,12 @@
 # Release and publication procedure
 
-This is a prepared procedure, not an authorization to publish or deploy. The owner requested **no license yet and publication pending**. The intended source repository is `scasella/ephemeral`; it has not been created by this work. Keep `package.json` private and do not run `npm publish`.
+This is a prepared procedure, not an authorization to publish or deploy. The owner selected the [MIT License](../LICENSE), with copyright credited to scasella, and kept **publication pending**. The intended source repository is `scasella/ephemeral`; it has not been created by this work. Keep `package.json` private and do not run `npm publish`.
 
 Use only the separate sanitized publication checkout and its reviewed `main` history. Original history and private evidence are archived outside it. Never mirror-push the original repository, import its ancestors/editor refs, or attach private bundles and receipts to a release. Any future edits require a new exact-commit scan.
 
 ## Local candidate checks
+
+For the intended local source release, start with [local release blockers and pilot limitations](RELEASE-READINESS.md#remaining-local-source-release-blockers). The real [clean-checkout acceptance](VALIDATION.md#clean-checkout-local-live-acceptance) passed the core local flow using the documented Cloudflare fallback. MIT licensing is selected separately; the test does not supply a working private security contact, GitHub CI, or evidence for unexecuted expiry/crash/upstream-revocation checks. Hosted acceptance below is a separate deployment decision.
 
 Use Node 24, Git, and `openssl`. From a clean checkout without integration configuration:
 
@@ -54,7 +56,7 @@ Compose now passes the raw password through `PGPASSWORD` and uses a password-fre
 
 Before any push or public visibility change:
 
-- The owner selects licensing and explicitly approves publication. Add the selected license and update the pending statements in README, CONTRIBUTING, SECURITY, and this guide. No license or contributor agreement is supplied implicitly.
+- The owner explicitly approves publication. Retain the selected MIT License, copyright notice and matching package metadata. The README's visible-credit request is optional; do not present it as an additional license condition. No separate contributor agreement is supplied.
 - Review source, history, documentation images, author metadata, and release notes for information the owner intends to disclose. Re-run the redacted history/candidate scan on the exact publication commit. Never publish `.env`, private keys, `.data`, database backups, raw logs, or credential-aware test receipts.
 - Establish a tested private security contact. GitHub's [private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository) requires a public repository; enable/test it at the authorized visibility change and update SECURITY before announcing.
 - Confirm the repository name still belongs to your GitHub account and the selected visibility. Use a private preparation repository first if authorized; do not create or change one automatically from this document.

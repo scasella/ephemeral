@@ -4,7 +4,7 @@ For the guided setup path, start with [first-run setup](FIRST-RUN.md). This docu
 
 This path runs the control plane on your Mac and reaches it through an HTTPS tunnel. It creates **no Render service or database**. A real E2B template/sandbox and GitHub App are still required; provider usage and the user's Codex account limits apply. Preparation is not evidence that the live test passed.
 
-Historical local integration results are summarized in [validation](VALIDATION.md). Run the acceptance checks again against your own dedicated fixture; historical results do not establish a new deployment.
+Historical local integration results and the [clean-checkout acceptance result](VALIDATION.md#clean-checkout-local-live-acceptance) are summarized in validation. Run the acceptance checks again against your own dedicated fixture; recorded results do not establish a new deployment.
 
 The local preview can keep running on port 4310. Run a separate, built production application on **127.0.0.1:4311**, with **`.env.live`** and **`.data/local-live`**. Use only a dedicated private fixture repository such as **`example-owner/ephemeral-smoke`** for the initial GitHub App installation and test changes.
 
@@ -59,6 +59,8 @@ Fill every relevant setting in `.env.live`. If using the PEM file setting, keep 
 
 ## 2. Start a reachable HTTPS tunnel
 
+Choose ngrok below or the [verified Cloudflare Quick Tunnel fallback](FIRST-RUN.md#cloudflare-quick-tunnel-fallback). Both must target the selected loopback app port and pass `npm run setup:local -- tunnel-check` after startup. The wizard's ngrok wording does not restrict the accepted public HTTPS origin. If ngrok returns ERR_NGROK_727, resolve its account quota or use the fallback rather than upgrading automatically. A proxy error page is not successful application health.
+
 Install a supported ngrok agent and configure its account authtoken privately; installation alone does not establish authentication. If authentication is missing, add the credential through a private configuration editor with restricted file permissions, rather than placing it in a command argument.
 
 In a separate terminal, start the tunnel:
@@ -70,6 +72,8 @@ ngrok http http://127.0.0.1:4311 --inspect=false --log=false
 These flags disable agent HTTP inspection and agent log output. Do not enable request capture/replay or payload logging: OAuth redirects, browser cookies, and Git Authorization headers are sensitive. The [ngrok CLI reference](https://ngrok.com/docs/gateway/agent/cli) documents the HTTP forwarding and inspection options.
 
 Record the assigned **HTTPS origin**, such as `https://your-assigned-name.ngrok-free.app`, in `.env.live` as `PUBLIC_URL`. Use the actual URL, with no path or query and no local address. Keep this endpoint unchanged throughout a session. The app and VM use this origin for OAuth callbacks, browser Origin checks, WebSockets, and the Git gateway.
+
+On restart, a different origin requires [coordinated private configuration and existing GitHub App updates](FIRST-RUN.md#restarting-with-a-different-public-hostname). Reconcile old sessions first; preserve the encryption key and database. Do not recreate the App, broaden permissions, silently overwrite configuration or disable TLS verification as a tunnel workaround.
 
 Do not put ngrok Basic Auth or a second interactive OAuth gate in front of the gateway: the VM's Git client authenticates using the application's own scoped capability. Preserve normal HTTP forwarding, WebSocket upgrades, Origin, and cookies. No Host rewrite or `trust proxy` change is required by the current code: secure cookies are configured from the explicit HTTPS `PUBLIC_URL`, and redirects use that configured origin.
 
@@ -133,9 +137,9 @@ Record session ID, template ID, timestamps, actual upstream commit, pull request
 
 1. Sign in with the allowlisted GitHub identity. Confirm `example-owner/ephemeral-smoke` appears and unrelated repositories do not.
 2. Launch from the intended base branch. Observe provisioning then running and a matching real E2B sandbox. The work branch must be unique, the countdown must start at about one hour, and the extension button must be absent.
-3. Complete **fresh Codex device authentication in that VM** with the user's account. The app does not reuse the Mac's Codex credentials or another session's auth. Verify Codex starts. Create a scratch marker, disconnect/reconnect the browser terminal, and verify the same tmux session and marker remain.
+3. Complete **fresh Codex device authentication in that VM** with the user's account. The app does not reuse the Mac's Codex credentials or another session's auth. Keep the device code out of evidence. Check `codex login status` in the VM, complete folder/trust prompts, and request a small read-only task. Observe a useful model response; do not count terminal attachment as Codex readiness. Create a scratch marker, disconnect/reconnect the browser terminal, and verify the same tmux session and marker remain. Wait for **connected** before typing; use terminal paste for a longer prompt. Only the person who observes the response should click the useful-response confirmation.
 4. Make a harmless smoke change and intentionally `git add`, `git commit`, and `git push -u origin HEAD`. Verify the actual GitHub session branch contains the commit. Attempt an update to a different disposable branch or tag and verify rejection with no upstream update. Do not merge the smoke branch into the repository's base branch.
-5. Create a draft pull request from the UI. Verify its real GitHub URL, selected base, unique session head, and committed diff. The UI action must not automatically commit or push work.
+5. Open **Published**, wait for a checked comparison, and review the pushed files/patch against the selected base. For PR-handoff acceptance, create a draft pull request from the UI and verify its real GitHub URL, selected base, unique session head, and committed diff. The UI action must not automatically commit or push work. Record separately whether PR creation was actually tested.
 6. Stop through the unpushed-work-loss confirmation. Watch the independent gateway, GitHub, local Codex, and VM cleanup outcomes. Confirm the E2B resource is absent. Credential-rejection checks require a private, credential-aware harness that reports statuses without printing captured secrets. Codex **remote** revocation remains explicitly **unverified**.
 7. For automatic-expiry acceptance, launch another clean machine and let the full one-hour lifetime elapse while the control plane remains online. Verify the ten-minute and two-minute warnings, automatic cleanup, and provider absence. Do not manipulate SQL timestamps as a substitute for a real expiry test.
 
@@ -175,7 +179,9 @@ This mode performs no sandbox creation/resume/destruction or Git writes. It read
 
 ## Finish safely
 
-Stop the test machine and resolve pending cleanup **before** shutting down the local server or tunnel. Check provider absence and individual cleanup statuses; merely closing the browser does not stop compute. Exit the server gracefully with Ctrl-C, then stop ngrok. Preserve `.env.live`, its encryption key, and `.data/local-live` privately for any pending revocation/recovery. Do not delete them to hide a cleanup failure.
+Before teardown, inspect repository work and confirm local HEAD matches the remote session branch. The UI's uncommitted/untracked/unpushed check excludes ignored files and files outside the repository; separately inspect those if they could contain work you need. Commit/push intended work and handle any scratch marker deliberately before stopping.
+
+Stop the test machine and resolve pending cleanup **before** shutting down the local server or tunnel. Check provider absence and individual cleanup statuses; merely closing the browser does not stop compute. Exit the server gracefully with Ctrl-C, then stop ngrok or `cloudflared`. If leaving the app/tunnel online, verify that no test VM remains running. Preserve `.env.live`, its encryption key, and `.data/local-live` privately for any pending revocation/recovery. Do not delete them to hide a cleanup failure.
 
 Server shutdown deliberately preserves active VMs. If the Mac sleeps, crashes, or the server exits while a sandbox runs, the provider's timeout still bounds compute, but persisted gateway/GitHub cleanup may need the same control plane restarted. A changed tunnel URL breaks the old VM's configured Git remote; stop/reconcile outstanding sessions before rotating the public origin, then update both `.env.live` and the GitHub callback together.
 

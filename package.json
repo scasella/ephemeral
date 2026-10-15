@@ -2,6 +2,7 @@
   "name": "ephemeral",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Disposable cloud coding sessions with scoped GitHub access; invite-only pilot.",
   "repository": {
     "type": "git",

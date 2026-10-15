@@ -18,4 +18,4 @@
 - [ ] Documentation reflects the resulting behavior and its limits.
 - [ ] The diff and attachments contain no secrets, credential-bearing URLs, private repository content, or private operational evidence.
 
-<!-- Do not post suspected vulnerability details here. Follow SECURITY.md. Publication and licensing remain separate maintainer decisions. -->
+<!-- Do not post suspected vulnerability details here. Follow SECURITY.md. MIT licensing does not authorize publication; that remains a separate maintainer decision. -->

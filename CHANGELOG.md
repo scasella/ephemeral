@@ -2,11 +2,14 @@
 
 ## Unreleased — initial pilot publication candidate
 
-Publication and project licensing are pending. No GitHub release, npm package, or hosted deployment is represented by this entry.
+The project uses the MIT License with copyright credited to scasella. Publication remains pending. No GitHub release, npm package, or hosted deployment is represented by this entry.
+
+- MIT licensing: retained copyright/license notice required, with an optional request for visible project credit and matching package metadata. No additional attribution condition or npm publication is introduced.
 
 - Publication privacy: fresh noreply-attributed history, private evidence retained outside the public tree, synthetic examples, explicit disposable smoke-fixture selection, and no editor snapshot refs.
 - Hosting preparation: Sites compatibility assessment, host-specific acceptance procedure and explicit retention/support drafts with contact setup pending.
 - Local onboarding: resumable first-run guide for private configuration, ngrok, personal GitHub App registration/selected-repository installation, and confirmed E2B template builds; read-only diagnostics and isolated local live launch.
+- Local setup documentation: verified Cloudflare Quick Tunnel fallback, coordinated hostname/callback restart steps, Node/npm wrapper troubleshooting, fresh Codex login/reconnect guidance, and a sanitized clean-checkout acceptance report with remaining local release gates.
 
 - Disposable E2B coding sessions with GitHub account allowlisting, branch-scoped Git gateway access, fresh Codex device sign-in, bounded lifetimes, and independently tracked cleanup outcomes.
 - Persistent terminal context and a supplemental shell; searchable session history; keyboard navigation, focus mode, readable controls, and expiry reminders.
