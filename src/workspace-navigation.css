@@ -1,0 +1,40 @@
+/* Leave breathing room above the selected tab while exposing its panel below. */
+#machine-detail-heading, .tabs > [role="tab"] { scroll-margin-top: 12px; }
+.workspace-selection-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+/* Keep the selected identity, deadline and consequences in one header. These
+   selectors also take precedence over the shared reflow stylesheet. */
+.app-shell .selected-machine-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 24px; padding: 12px 0; margin-bottom: 12px; border-block: 1px solid var(--line); min-width: 0; }
+.app-shell .selected-machine-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
+.app-shell .selected-machine-title h2 { font-size: 22px; line-height: 1.4; overflow-wrap: anywhere; }
+.app-shell .selected-machine-branches { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 6px; font-size: 14px; color: #545454; overflow-wrap: anywhere; }
+.app-shell .selected-machine-branches > span { min-width: 0; }
+.app-shell .selected-machine-branches code { font-size: inherit; }
+.app-shell .selected-machine-lifetime { display: flex; flex-direction: column; justify-content: center; gap: 2px; font-size: 12px; color: #545454; }
+.app-shell .selected-machine-lifetime strong { font-size: 16px; font-weight: 500; color: #252525; font-variant-numeric: tabular-nums; }
+.app-shell .selected-machine-header > .workspace-context-stale { grid-column: 1 / -1; margin: 0; padding: 6px 10px; border-left: 3px solid #8a7652; background: #f6f3e9; font-size: 14px; }
+.app-shell .selected-machine-controls { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 18px; }
+.app-shell .selected-machine-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.app-shell .compact-machine-workspace > .page-heading { margin-bottom: 12px; }
+.app-shell .compact-machine-workspace > .page-heading .eyebrow { margin-bottom: 4px; }
+.app-shell .compact-machine-workspace > .session-history,
+.app-shell .compact-machine-workspace > .work-status-panel { margin-bottom: 12px; }
+.app-shell .compact-machine-workspace .panel-disclosure-summary { padding: 10px 14px; min-height: 44px; }
+.app-shell .compact-machine-workspace > .tabs { margin-bottom: 12px; }
+/* A second active machine remains reachable, without a full extra task header. */
+.app-shell .active-workspace-context { padding: 10px 14px; margin-bottom: 12px; }
+.app-shell .active-workspace-context .workspace-context-heading { margin-bottom: 4px; }
+.app-shell .active-workspace-context .workspace-context-machine { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.app-shell .active-workspace-context .workspace-context-machine > strong { margin-right: 0; }
+.app-shell .active-workspace-context .workspace-context-copy { flex: 1 1 220px; margin: 0; }
+.app-shell .active-workspace-context .workspace-context-actions { margin-top: 0; }
+@media (max-width: 760px) {
+  .app-shell .selected-machine-header { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .app-shell .selected-machine-lifetime { flex-direction: row; justify-content: flex-start; flex-wrap: wrap; gap: 4px 12px; }
+  .app-shell .selected-machine-controls { align-items: flex-start; }
+}
+/* Saved review handoffs share a row with their facts; retain wrapping and errors. */
+.app-shell .compact-machine-workspace > .saved-pull-requests { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; padding: 8px 14px; margin-bottom: 12px; }
+.app-shell .compact-machine-workspace > .saved-pull-requests > .eyebrow { flex: 0 0 auto; }
+.app-shell .compact-machine-workspace > .saved-pull-requests > a { flex: 1 1 680px; min-width: 0; padding-top: 0; gap: 4px 12px; }
+.app-shell .compact-machine-workspace > .saved-pull-requests > .workflow-message { flex-basis: 100%; margin: 4px 0 0; }

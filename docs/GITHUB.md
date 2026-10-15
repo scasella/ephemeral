@@ -1,0 +1,53 @@
+# GitHub gateway
+
+`server/github/index.ts` exports async `createGitHubServices({db, appId, privateKey, encryptionKey, appSlug, publicUrl, getSession, authorizeSession?})` and the `Repo` type. Its result contains `credentials`, an Express `router`, `repositories(userAccessToken)`, `branches(userAccessToken, installationId, repositoryId)`, `createPullRequest(session, title, body?)`, and `close()`. Call `close()` during server shutdown, after session cleanup. Mount the router at `/gateway` before body parsing middleware. The clone URL is `${publicUrl}/gateway/git/${sessionId}.git`, authenticated with Basic username `x-access-token` and the random gateway capability as password.
+
+## Access boundary
+
+The browser lists repositories through the GitHub App user's `/user/installations` and `/user/installations/{id}/repositories` endpoints. The list includes only this App's nonsuspended installations and repositories with that user's explicit push permission. Root validates the chosen repository and base branch against these lists. The optional `authorizeSession` callback should recheck the user's current repository access and throw when it is revoked. The live server supplies this callback.
+
+Each Git HTTP request checks the persisted capability hash, session state, expiry, and current user authorization before performing repository access, and repeats the check after waiting for the session operation lock. Provisioning sessions can clone; only running sessions can push or create pull requests. Read operations stay within the selected repository. Supported routes are smart-HTTP discovery, upload-pack and receive-pack. There is no generic REST proxy, merge API, delete API, LFS endpoint, or credential endpoint exposed to the VM.
+
+The server maintains a private bare intermediary for each session. Its server-owned pre-receive hook checks the complete incoming update set before any upstream mutation. Exactly one ref, `refs/heads/${session.branch}`, can be updated. The branch must use the `ephemeral/` namespace, differ from the base branch, point to a commit, and advance by fast-forward. New branches must descend from the selected base tip. Tags, deletions, other branches and multi-ref pushes are rejected. The hook checks live authorization again through a mode-0600 Unix socket, then pushes the new object to GitHub with an explicit upstream lease. Git's quarantine environment stays intact so the upstream push can read incoming objects. Upstream push failure rejects the client's push rather than reporting a successful local-only update. GitHub branch rules still apply. The gateway does not bypass them.
+
+If an upstream push succeeds but the server crashes before its local intermediary is updated, the next request refetches GitHub's refs. Such a crash may leave the client uncertain whether its push completed; the upstream branch remains the authoritative record.
+
+## Credentials and cleanup
+
+The VM gets a 256-bit random capability. Only its SHA-256 hash is persisted. GitHub installation tokens are issued for one repository with `contents:write` and `pull_requests:write`. Tokens never enter the VM, client URLs, remote configuration, or application logs. AES-256-GCM encrypts each persisted upstream token with session and record identity as authenticated context. `encryptionKey` accepts 32 bytes encoded as hex or base64. Keep this key stable across restarts.
+
+Git authentication uses server-only mode-0600 temporary token files and an askpass helper. The token is absent from command arguments and the Git URL. Process environments contain only helper paths and control information, not the upstream token. Git configuration and tracing from the parent environment are excluded. HTTP redirects are disabled upstream.
+
+Tokens are refreshed when fewer than two minutes remain before expiry. Each issued token has its own encrypted record, including previous tokens awaiting revocation. Failed revocations remain `revoke_pending` and are retried at startup and during session cleanup; confirmed or expired token records have their ciphertext erased. A 401 from GitHub establishes that a token is unusable; other revocation failures remain pending.
+
+Before calling the token issuance API, the server persists an issuance uncertainty marker. If GitHub creates a token but its response or the database write is lost, cleanup cannot falsely confirm revocation. It stays pending until the maximum documented installation-token lifetime plus a five-minute margin (65 minutes) has elapsed. A durable token record or confirmed compensation clears the current marker. A new token issuance is blocked while an earlier ambiguous attempt remains unexpired, so a successful retry cannot erase uncertainty for a lost token.
+
+Disable updates the database gate first, then kills active Git process groups (including hooks/upstream pushes) and deletes the session intermediary. Repository paths and temporary root paths are persisted. Startup removes the previous verified server-owned roots, including any plaintext askpass files abandoned by a crash. A remote push already committed at GitHub cannot be undone by killing its local process. Cleanup revokes credentials; it preserves the GitHub session branch and draft PR.
+
+## Runtime limits
+
+Run one server owner per database; the root server holds a PostgreSQL advisory singleton lock. Per-session queues serialize repository operations, token rotations, and pull request creation, with at most eight waiting/in-flight operations. Do not deploy this module across concurrent instances sharing the same database and local disk.
+
+The host needs Node.js, Git with smart HTTP support, Unix sockets and process groups, and private local scratch storage. Requests have a 32-MiB body limit, a 30-second input deadline, a 120-second Git command deadline and a 256-MiB Git response limit. The intermediary has a 1-GiB disk limit checked before/after operations and once per second during commands. Filesystem quotas are needed for a strict instantaneous disk ceiling: the periodic check may exceed the limit briefly during a fast fetch. Bodies and Git responses are buffered; size the process memory for the configured concurrent session limit. Compression of Git POST bodies is rejected; standard Git sends uncompressed requests by default. Large repositories/pushes, Git LFS, alternate repository submodules and custom upload/receive commands are outside the pilot's supported scope.
+
+## Validation
+
+`npx vitest run tests/github.test.ts` tests cryptographic integrity and context binding, App JWT signature, permission intersection, narrowed installation tokens, encrypted storage, rotation and revocation retries, unknown issuance, and actual temporary Git servers. The real Git tests clone and push successfully, reject unauthorized multi-ref/tag/deletion/force pushes, propagate upstream rejection, and gate provisioning/expiry/revocation/current user permission. Loopback and Unix socket tests need permission to create local sockets when the execution sandbox blocks them.
+
+Official references: [GitHub installation authentication](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation), [GitHub App JWTs](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app), [user installation repository access and token revocation](https://docs.github.com/en/rest/apps/installations), [Git smart HTTP backend](https://git-scm.com/docs/git-http-backend), and [receive-pack hooks and quarantine](https://git-scm.com/docs/git-receive-pack).
+
+## Registering the pilot App
+
+Once the public HTTPS deployment origin is known, run:
+
+```sh
+node --import tsx scripts/register-github-app.ts --public-url https://YOUR-DEPLOYMENT-ORIGIN --owner-id 123456 --env-file .env.live
+```
+
+Open the printed loopback URL and review the App form while signed in as your GitHub account. GitHub creates the App only after you approve its registration. The App is private, requests Contents write and Pull requests write, and disables webhooks. Installation is a separate step: follow the returned installation link and select only `example-owner/ephemeral-smoke` for the local pilot fixture.
+
+The helper checks a one-use state, exchanges the callback code server-side, validates the returned owner, and saves credentials with private file permissions. The `--env-file .env.live` option fills missing or empty GitHub fields in an isolated ignored live file, preserving the preview `.env`. The only supported output names are `.env` (default) and `.env.live`; the selected file must be ignored. It preserves unrelated configuration in that selected file. Existing GitHub credentials or a conflicting `PUBLIC_URL` stop registration before the GitHub form. Changes to the selected environment file during approval stop the merge and retain recovery files under ignored `.data/github-registration/`. Never commit or paste those files into chat. The generated private key path is local; deploy its contents using the hosting provider's secret storage.
+
+The registration session expires after 30 minutes. If exchange fails after GitHub creates the App, inspect its settings and the private recovery directory before retrying. The helper does not create E2B resources, deploy the server, install the App, or enable live mode.
+
+References: [GitHub's manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) and [manifest conversion endpoint](https://docs.github.com/en/rest/apps/apps#create-a-github-app-from-a-manifest).

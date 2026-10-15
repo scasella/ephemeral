@@ -1,0 +1,68 @@
+# Pilot: one control plane, one-hour E2B Hobby sessions.
+# Current Render plan IDs; verify charges before applying this Blueprint.
+services:
+  - type: web
+    name: ephemeral-web
+    runtime: docker
+    plan: 1c-2g # Former Standard: 1 CPU / 2 GB.
+    region: virginia
+    numInstances: 1
+    autoDeployTrigger: 'off'
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 60
+    disk:
+      name: ephemeral-data
+      mountPath: /app/.data
+      sizeGB: 5
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: EPHEMERAL_MODE
+        value: live
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: '10000'
+      - key: DATA_DIR
+        value: /app/.data
+      - key: SESSION_MAX_HOURS
+        value: '1'
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ephemeral-db
+          property: connectionString
+      # Exact public HTTPS origin, e.g. https://ephemeral-web.onrender.com.
+      # Confirm the assigned URL; names can collide and Render may add a suffix.
+      - key: PUBLIC_URL
+        sync: false
+      - key: E2B_API_KEY
+        sync: false
+      - key: E2B_TEMPLATE_ID
+        sync: false
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_SLUG
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false
+      # Supply a stable base64 encoding of exactly 32 random bytes.
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: ALLOWED_GITHUB_IDS
+        sync: false
+
+databases:
+  - name: ephemeral-db
+    plan: 0.1c-256mb # Former Basic-256mb.
+    region: virginia
+    databaseName: ephemeral
+    user: ephemeral
+    diskSizeGB: 1
+    storageAutoscalingEnabled: false
+    ipAllowList: [] # Private-network connections only.

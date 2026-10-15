@@ -1,0 +1,25 @@
+title = "Ephemeral public release secret scan"
+
+[extend]
+useDefault = true
+
+# The default rules miss a standalone E2B key without an assignment label.
+# E2B's SDK documents the e2b_ prefix and a 40-hex-character example:
+# https://github.com/e2b-dev/E2B/blob/main/packages/js-sdk/src/api/index.ts
+[[rules]]
+id = "e2b-api-key"
+description = "E2B API credential with the documented 40-hex-character form"
+regex = '''\be2b_[0-9a-f]{40}\b'''
+keywords = ["e2b_"]
+
+# This exact source line contains empty environment fallbacks, not credentials.
+# Keep the default detector and require BOTH the path and whole-line match.
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Exact empty E2B environment fallbacks in server configuration"
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)server/config\.ts$''']
+regexes = ['''(?m)^[\t ]*e2bApiKey: env\.E2B_API_KEY \|\| '', e2bTemplateId: env\.E2B_TEMPLATE_ID \|\| '',[\t ]*$''']

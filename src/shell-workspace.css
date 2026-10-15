@@ -1,0 +1,18 @@
+.shell-tabs-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 6px 0 8px; }
+.shell-tabs, .shell-actions, .shell-recovery { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.shell-workspace .shell-tabs button, .shell-actions button, .shell-recovery button { min-height: 36px; padding: 7px 12px; border: 1px solid #cececa; border-radius: 3px; background: #fff; color: #333; font-size: 12px; }
+.shell-workspace .shell-tabs button { max-width: min(320px, 70vw); overflow-wrap: anywhere; text-align: left; }
+.shell-workspace .shell-tabs button.active { background: #edf0e7; border-color: #66735b; }
+.shell-workspace .shell-tabs button span { color: #666; font-size: 11px; }
+.shell-workspace button:focus-visible { outline: 2px solid #465d3e; outline-offset: 2px; }
+.shell-description { margin: 7px 0; font-size: 12px; line-height: 1.6; color: #666; }
+.shell-message, .shell-error { padding: 10px 12px; margin: 8px 0; background: #f5f5f1; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.shell-error { color: #8d3e32; background: #fbf2ee; }
+.shell-recovery { margin-bottom: 12px; }
+.shell-workspace > [role="tabpanel"][hidden] { display: none; }
+.shell-dialog { max-width: min(520px, calc(100vw - 32px)); }
+.shell-dialog h2 { overflow-wrap: anywhere; }
+
+.shell-details { margin-top: 10px; font-size: 11px; color: #666; }
+.shell-details summary { width: fit-content; cursor: pointer; padding: 5px 0; }
+.shell-details summary:focus-visible { outline: 2px solid #465d3e; outline-offset: 2px; }

@@ -1,0 +1,7 @@
+:root { font-family:system-ui,sans-serif; color:#1f2923; background:#f3f6f0; }
+body { max-width:780px; padding:32px; margin:auto; line-height:1.6; }
+main { padding:28px; background:white; border:1px solid #aab5a5; border-radius:8px; }
+label { display:block; margin-top:20px; }
+button,input { font:inherit; padding:10px 14px; border:1px solid #788775; border-radius:4px; }
+input { width:100%; box-sizing:border-box; }
+#proof { font-family:monospace; overflow-wrap:anywhere; }

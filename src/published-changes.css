@@ -1,0 +1,43 @@
+.published-changes .detail-heading { gap:16px; flex-wrap:wrap; }
+.app-shell .detail-panel.published-changes { padding:12px; min-height:0; }
+.app-shell .published-changes .detail-heading { flex-direction:row; align-items:center; margin-bottom:10px; gap:8px 16px; }
+.published-comparison { min-width:0; color:#545454; font-size:14px; line-height:1.7; }
+.published-scope, .published-warning { padding:8px 12px; background:#f1f1ee; border:1px solid #d8d8d8; border-radius:3px; overflow-wrap:anywhere; }
+.published-scope { margin:0 0 10px; }
+.published-observation { display:flex; flex-wrap:wrap; align-items:flex-start; gap:4px 16px; margin:0 0 10px; }
+.published-observation > p { min-width:0; }
+.published-observation > [role], .published-observation > .published-warning { flex-basis:100%; }
+.published-provenance { min-width:0; }
+.published-provenance summary { cursor:pointer; color:#454541; overflow-wrap:anywhere; }
+.published-provenance summary:focus-visible { outline:2px solid #4a4a4a; outline-offset:3px; }
+.published-provenance[open] { flex-basis:100%; padding-bottom:8px; }
+.published-facts { margin:12px 0; }
+.published-facts > div { display:grid; grid-template-columns:minmax(110px,25%) minmax(0,1fr); gap:10px; margin-top:8px; }
+.published-facts dt { font-size:12px; color:#626262; }
+.published-facts dd { margin:0; overflow-wrap:anywhere; white-space:pre-wrap; unicode-bidi:plaintext; }
+.published-link { display:inline-block; text-decoration:underline; text-underline-offset:3px; overflow-wrap:anywhere; }
+.published-layout { display:grid; grid-template-columns:minmax(180px,30%) minmax(0,1fr); border:1px solid #d8d8d8; border-radius:3px; overflow:hidden; min-width:0; }
+.published-files { border-right:1px solid #d8d8d8; min-width:0; }
+.published-layout h4 { margin:0; padding:12px; font-weight:500; border-bottom:1px solid #d8d8d8; font-size:14px; }
+.published-files h4 { display:flex; justify-content:space-between; gap:8px; }
+.published-files ul { margin:0; padding:0; list-style:none; max-height:400px; overflow:auto; }
+.published-files li + li { border-top:1px solid #dedede; }
+.published-files li > button { display:block; width:100%; border:0; background:#fafafa; padding:12px; text-align:left; line-height:1.7; }
+.published-files li > button:hover { background:#f0f0ed; }
+.published-files li > button[aria-pressed=true] { background:#eaeae5; box-shadow:inset 3px 0 #454541; }
+.published-files li > button:focus-visible { outline-offset:-3px; }
+.published-path { display:block; overflow-wrap:anywhere; white-space:pre-wrap; unicode-bidi:plaintext; }
+.published-metadata { display:block; font-size:12px; color:#626262; margin-top:5px; white-space:pre-wrap; overflow-wrap:anywhere; unicode-bidi:plaintext; }
+.published-detail { min-width:0; background:white; }
+.published-empty { padding:12px; overflow-wrap:anywhere; }
+.published-patch { margin:12px; padding:12px; max-height:400px; overflow:auto; border:1px solid #dedede; background:#fafafa; white-space:pre-wrap; overflow-wrap:anywhere; unicode-bidi:plaintext; tab-size:4; }
+.app-shell .published-comparison :is(p,dd,a,.published-path,.published-patch), .modal .published-comparison :is(p,dd,a,.published-path,.published-patch) { font-size:14px; line-height:1.7; }
+.app-shell .published-comparison .published-metadata, .modal .published-comparison .published-metadata { font-size:12px; }
+.modal .published-layout { grid-template-columns:1fr; }
+.modal .published-files { border-right:0; border-bottom:1px solid #d8d8d8; }
+.modal .published-files ul { max-height:190px; }
+.modal .published-comparison .published-patch { max-height:260px; }
+.pr-published-review { margin-bottom:20px; }
+.pr-published-review > .button { margin-bottom:14px; }
+@media(max-width:900px) { .published-layout { grid-template-columns:1fr; } .published-files { border-right:0; border-bottom:1px solid #d8d8d8; } .published-files ul { max-height:220px; } }
+@media(max-width:640px) { .published-facts > div { grid-template-columns:1fr; gap:2px; } .published-patch { margin:10px; padding:10px; max-height:260px; } }

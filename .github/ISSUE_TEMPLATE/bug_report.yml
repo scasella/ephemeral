@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a reproducible, non-sensitive problem.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For suspected vulnerabilities, follow SECURITY.md. Do not disclose exploit details publicly.
+        Do not attach secrets, .env files, tokens, keys, cookies, databases, terminal transcripts, or private repository data. Redact screenshots and short diagnostic excerpts.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and expected behavior
+      description: Describe what happened and what you expected.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Local preview (simulated sessions)
+        - Local private-preview test harness
+        - Live pilot
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Use a disposable example and include the observed result. Omit credentials and private repository names or content.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Revision and environment
+      description: Commit or version, OS, browser, Node version, and relevant non-sensitive settings.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Optional short redacted error excerpt or screenshot. State whether observations are simulated or live.
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Before submitting
+      options:
+        - label: I reviewed this report and its attachments for secrets and private data.
+          required: true

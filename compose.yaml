@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: ephemeral
+      POSTGRES_USER: ephemeral
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U ephemeral]
+      interval: 5s
+      retries: 10
+  app:
+    build: .
+    env_file: .env
+    environment:
+      EPHEMERAL_MODE: live
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4310
+      DATA_DIR: /app/.data
+      DATABASE_URL: postgresql://ephemeral@postgres:5432/ephemeral
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    ports:
+      - '127.0.0.1:4310:4310'
+    volumes:
+      - app-data:/app/.data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 40s
+volumes:
+  postgres-data:
+  app-data:

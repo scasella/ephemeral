@@ -1,0 +1,23 @@
+.handoff-notes textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 90px; padding: 11px 12px; color: var(--ink); background: #fff; border: 1px solid #d5d5d5; border-radius: 3px; font: inherit; font-size: 12px; line-height: 1.7; }
+.handoff-notes textarea:disabled { background: #f3f3f3; color: #747474; opacity: 1; }
+.handoff-notes textarea:focus-visible { outline: 2px solid #4a4a4a; outline-offset: 4px; }
+.handoff-notes p, .handoff-notes .form-help, .handoff-notes label, .handoff-notes .button, .handoff-notes .form-error, .continuation-note p { font-size: 12px; line-height: 1.7; }
+.note-field { margin: 16px 0; }
+.note-field label { display: block; margin-bottom: 8px; color: #595959; }
+.note-tools { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.note-text { margin: 16px 0; color: var(--ink); font-size: 12px; }
+.note-text dt { font-weight: 600; margin-top: 14px; }
+.note-text dd { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+.inherited-note, .note-current, .note-confirmation, .continuation-note { border: 1px solid var(--line); background: var(--canvas); border-radius: 3px; padding: 18px; margin: 18px 0; }
+.inherited-note h4, .note-current h4 { font-size: 13px; }
+.inherited-note code { overflow-wrap: anywhere; }
+.note-confirmation button + button { margin-left: 12px; }
+.note-status { line-height: 1.7; }
+.note-guidance { margin: 8px 0 14px; }
+.note-guidance summary, .inherited-note summary { cursor: pointer; font-size: 12px; line-height: 1.7; }
+.note-guidance summary:focus-visible, .inherited-note summary:focus-visible { outline: 2px solid #4a4a4a; outline-offset: 3px; }
+.inherited-note { padding: 12px; }
+.note-empty { margin: 10px 0; }
+.app-shell .detail-panel.handoff-notes { padding: 12px; min-height: 0; }
+.app-shell .handoff-notes .detail-heading { margin-bottom: 10px; }
+.handoff-notes button[aria-disabled=true] { opacity: .6; cursor: not-allowed; }
