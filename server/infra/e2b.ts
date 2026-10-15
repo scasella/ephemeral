@@ -4,8 +4,9 @@ import type { PreviewTarget, SandboxProvider, Session, SetupCommand, SetupComman
 import { inspectGitWorkspace, unavailableWorkStatus, type GitInspectionResult, type WorkStatus } from '../workspace-status.js';
 import { SETUP_CLEANUP_MS, SetupOutputDecoder, setupRunnerSource } from './setup-runner.js';
 import { ContinuationSourceChangedError } from '../core/continuation.js';
+import { SandboxCreationError } from '../core/provisioning.js';
 import { prepareGitCommand, shellQuote, SOURCE_CHANGED_EXIT } from './git-prepare.js';
-import { shellCommand, shellTarget, SHELL_FRAME } from './terminal-shell.js';
+import { recoverPrimaryShellCommand, shellCommand, shellTarget, SHELL_FRAME } from './terminal-shell.js';
 import { changeInspectionCommand, CHANGES_FRAME } from './change-inspection.js';
 import { isChangePath, parseWorkspaceChanges, unavailableWorkspaceChanges, type WorkspaceChanges } from '../workspace-changes.js';
 import { APPLICATION_PREVIEW_UNAVAILABLE, assertApplicationPreviewSession, privateApplicationPreviewTarget, type PreviewTokenStore } from './application-preview.js';
@@ -94,6 +95,19 @@ export class E2BProvider implements SandboxProvider {
       if (!session.sandboxId) throw new Error('Missing workspace.');
       return await this.shellOperation(await this.runningTerminalSandbox(session.sandboxId, session), shellId, 'ensure');
     } catch { throw new Error('Unable to open workspace shell.'); }
+  }
+
+  async recoverPrimaryShell(session: Session): Promise<TerminalShellState> {
+    try {
+      if (!session.sandboxId) throw new Error('Missing workspace.');
+      const sandbox = await this.runningTerminalSandbox(session.sandboxId, session);
+      const result = await sandbox.commands.run(recoverPrimaryShellCommand(), {
+        user: 'user', cwd: WORKSPACE, timeoutMs: 10_000, requestTimeoutMs: 12_000, signal: AbortSignal.timeout(12_000),
+      });
+      if (result.exitCode !== 0 || !result.stdout.endsWith(SHELL_FRAME) ||
+        JSON.parse(result.stdout.slice(0, -SHELL_FRAME.length)).state !== 'open') throw new Error('Incomplete recovery.');
+      return 'open';
+    } catch { throw new Error('Primary shell recovery could not be confirmed.'); }
   }
 
   async inspectShell(session: Session, shellId: string): Promise<TerminalShellState> {
@@ -258,30 +272,39 @@ process.stdout.write(JSON.stringify({exitCode:result.status,stdout:result.stdout
   }
 
   async create(session: Session, gatewayToken: string): Promise<string> {
-    const remaining = Date.parse(session.expiresAt) - Date.now();
-    if (remaining <= 0) throw new Error('Session deadline passed before creation.');
-    const sandbox = await Sandbox.create(this.config.templateId, {
-      ...this.opts(), requestTimeoutMs: 60_000, retries: 0, timeoutMs: remaining,
-      metadata: { ephemeral_session_id: session.id, ephemeral_user_id: session.userId,
-        ephemeral_repository: session.repository, ephemeral_repository_id: String(session.repositoryId), ephemeral_branch: session.branch,
-        ephemeral_preview_gateway: PREVIEW_GATEWAY_VERSION },
-      envs: { EPHEMERAL_GATEWAY_TOKEN: gatewayToken },
-      allowInternetAccess: true, secure: true,
-      network: { allowPublicTraffic: false, maskRequestHost: 'localhost:${PORT}' },
-      lifecycle: { onTimeout: 'kill', autoResume: false },
-    });
+    const remaining = Math.min(Date.parse(session.expiresAt), Date.parse(session.maxExpiresAt)) - Date.now();
+    if (!Number.isFinite(remaining) || remaining < 1_000) throw new SandboxCreationError('not_created', 'request_not_sent');
+    let sandbox: Sandbox;
+    try {
+      sandbox = await Sandbox.create(this.config.templateId, {
+        ...this.opts(), requestTimeoutMs: 60_000, retries: 0, timeoutMs: remaining,
+        metadata: { ephemeral_session_id: session.id, ephemeral_user_id: session.userId,
+          ephemeral_repository: session.repository, ephemeral_repository_id: String(session.repositoryId), ephemeral_branch: session.branch,
+          ephemeral_preview_gateway: PREVIEW_GATEWAY_VERSION },
+        envs: { EPHEMERAL_GATEWAY_TOKEN: gatewayToken },
+        allowInternetAccess: true, secure: true,
+        network: { allowPublicTraffic: false, maskRequestHost: 'localhost:${PORT}' },
+        lifecycle: { onTimeout: 'kill', autoResume: false },
+      });
+    } catch {
+      // e2b 2.56.0 can throw after creation (template-version checks and kill),
+      // and errors carry no reliable create-response provenance. Even SDK error
+      // classes/status-like fields cannot prove that no VM was created.
+      throw new SandboxCreationError('unknown', 'request_uncertain');
+    }
+    const id = sandbox.sandboxId;
     try {
       if (sandbox.trafficAccessToken) {
-        if (this.config.previewTokens) await this.config.previewTokens.save(session, sandbox.sandboxId, sandbox.trafficAccessToken);
-        else this.previewTokens.set(sandbox.sandboxId, {
+        if (this.config.previewTokens) await this.config.previewTokens.save(session, id, sandbox.trafficAccessToken);
+        else this.previewTokens.set(id, {
           sessionId: session.id, token: sandbox.trafficAccessToken, expiresAt: Math.min(Date.parse(session.expiresAt), Date.parse(session.maxExpiresAt)),
         });
       } else if (this.config.previewTokens) throw new Error('Missing native preview token.');
     } catch {
-      await Sandbox.kill(sandbox.sandboxId, this.opts()).catch(() => {});
-      throw new Error('Sandbox creation could not be completed.');
+      await Sandbox.kill(id, this.opts()).catch(() => {});
+      throw new SandboxCreationError('created', 'resource_record_failed', id);
     }
-    return sandbox.sandboxId;
+    return id;
   }
 
   async prepare(session: Session): Promise<void> {
@@ -331,7 +354,7 @@ printf 'username=x-access-token\\npassword=%s\\n' "$EPHEMERAL_GATEWAY_TOKEN"
     // Every VM starts with an empty Codex auth directory. The device flow is
     // interactive, displayed by tmux when the browser attaches, and uses the
     // user's own subscription. tmux survives a browser or API-server disconnect.
-    const startup = "printf '\\nFresh sandbox. Complete the Codex device sign-in below.\\n'; unset OPENAI_API_KEY CODEX_API_KEY; if codex login --device-auth; then codex; fi; exec bash -l";
+    const startup = "tmux set-option -w -t '=ephemeral:' remain-on-exit on || exit 1; printf '\\nFresh sandbox. Complete the Codex device sign-in below.\\n'; unset OPENAI_API_KEY CODEX_API_KEY; if codex login --device-auth; then codex; fi; exec bash -l";
     await run(`tmux new-session -d -s ephemeral -c ${shellQuote(WORKSPACE)} ${shellQuote(`bash -lc ${shellQuote(startup)}`)}`);
   }
 
@@ -360,25 +383,45 @@ printf 'username=x-access-token\\npassword=%s\\n' "$EPHEMERAL_GATEWAY_TOKEN"
       throw error;
     }
   }
-  async cleanupCodex(sandboxId: string): Promise<boolean> {
+  async cleanupCodex(sandboxId: string, session?: Session): Promise<boolean> {
     try {
-      const sandbox = await this.connect(sandboxId);
+      const opts = { ...this.opts(), requestTimeoutMs: 10_000, retries: 0 };
+      const response = await new ApiClient(new ConnectionConfig(opts)).api.GET('/sandboxes/{sandboxID}', {
+        params: { path: { sandboxID: sandboxId } }, signal: AbortSignal.timeout(10_000),
+      });
+      if (response.response?.status === 404) return true;
+      const info = response.data, metadata = info?.metadata ?? {};
+      if (response.error || !info || info.sandboxID !== sandboxId || info.state !== 'running' ||
+        info.lifecycle?.autoResume !== false || !Number.isFinite(Date.parse(info.endAt)) || Date.parse(info.endAt) <= Date.now()) return false;
+      if (session && (metadata.ephemeral_session_id !== session.id || metadata.ephemeral_user_id !== session.userId ||
+        metadata.ephemeral_repository !== session.repository || metadata.ephemeral_repository_id !== String(session.repositoryId) ||
+        metadata.ephemeral_branch !== session.branch)) return false;
+      if (!session && (!metadata.ephemeral_session_id || !metadata.ephemeral_user_id)) return false;
+      const expiry = Math.min(Date.parse(info.endAt), session ? Date.parse(session.expiresAt) : Infinity,
+        session ? Date.parse(session.maxExpiresAt) : Infinity);
+      if (!Number.isFinite(expiry) || expiry <= Date.now()) return false;
+      const deadline = AbortSignal.timeout(Math.min(35_000, Math.max(1, expiry - Date.now())));
+      const sandbox = new Sandbox({ ...opts, sandboxId: info.sandboxID, sandboxDomain: info.domain ?? undefined,
+        envdVersion: info.envdVersion, envdAccessToken: info.envdAccessToken });
+      deadline.throwIfAborted();
       // Stop every process owned by the workspace user before touching auth.
       // This includes Codex, its login/refresh flow, tmux, and detached jobs.
       const stopped = await sandbox.commands.run('pkill -KILL -u user || test "$?" -eq 1',
-        { user: 'root', timeoutMs: 10_000, requestTimeoutMs: REQUEST_MS });
+        { user: 'root', timeoutMs: 10_000, requestTimeoutMs: 12_000, signal: AbortSignal.any([deadline, AbortSignal.timeout(12_000)]) });
       if (stopped.exitCode !== 0) return false;
+      deadline.throwIfAborted();
+      if (expiry <= Date.now()) return false;
       const result = await sandbox.commands.run(`codex logout; logout_status=$?; rm -f "$HOME/.codex/auth.json" ${shellQuote(HELPER)}; exit "$logout_status"`,
-        { user: 'user', timeoutMs: 20_000, requestTimeoutMs: REQUEST_MS });
+        { user: 'user', timeoutMs: 20_000, requestTimeoutMs: 22_000, signal: AbortSignal.any([deadline, AbortSignal.timeout(22_000)]) });
       return result.exitCode === 0;
     } catch { return false; }
   }
-  async connectTerminal(sandboxId: string, onData: (data: Uint8Array) => void, cols: number, rows: number, shellId = 'codex'): Promise<TerminalConnection> {
+  async connectTerminal(sandboxId: string, onData: (data: Uint8Array) => void, cols: number, rows: number, shellId = 'codex', session?: Session): Promise<TerminalConnection> {
     const target = shellTarget(shellId);
     let sandbox: Sandbox;
     let pty: Awaited<ReturnType<Sandbox['pty']['create']>>;
     try {
-      sandbox = await this.runningTerminalSandbox(sandboxId);
+      sandbox = await this.runningTerminalSandbox(sandboxId, session);
       // Attachment only inspects an existing session. Explicit Add shell owns creation.
       if (await this.shellOperation(sandbox, shellId, 'inspect') !== 'open') throw new Error('Terminal is closed.');
       pty = await sandbox.pty.create({ user: 'user', cwd: WORKSPACE, cols, rows, onData, timeoutMs: 0, requestTimeoutMs: REQUEST_MS });
@@ -390,20 +433,37 @@ printf 'username=x-access-token\\npassword=%s\\n' "$EPHEMERAL_GATEWAY_TOKEN"
       await sandbox.pty.kill(pty.pid, { requestTimeoutMs: REQUEST_MS }).catch(() => {});
       throw new Error('Unable to attach sandbox terminal.');
     }
-    let disconnected = false;
+    let disconnected = false, ended = false;
+    const exitListeners = new Set<() => void>();
+    const finish = () => {
+      if (disconnected || ended) return;
+      ended = true;
+      for (const listener of [...exitListeners]) { try { listener(); } catch { /* An attachment observer must not reject the SDK event stream. */ } }
+      exitListeners.clear();
+    };
+    // The SDK consumes the PTY event stream immediately in CommandHandle's
+    // constructor. wait() observes that same stream, including an early end,
+    // nonzero command result, or transport loss. Never expose its error payload.
+    void pty.wait().then(finish, finish);
     return {
+      onExit(listener) {
+        if (ended && !disconnected) { try { listener(); } catch { /* Keep observers isolated. */ } }
+        else if (!disconnected) exitListeners.add(listener);
+        return () => { exitListeners.delete(listener); };
+      },
       async write(data) {
-        if (disconnected) throw new Error('Terminal is disconnected.');
+        if (disconnected || ended) throw new Error('Terminal is disconnected.');
         try { await sandbox.pty.sendInput(pty.pid, new TextEncoder().encode(data), { requestTimeoutMs: REQUEST_MS }); }
         catch { throw new Error('Unable to write to sandbox terminal.'); }
       },
       async resize(nextCols, nextRows) {
-        try { if (!disconnected) await sandbox.pty.resize(pty.pid, { cols: nextCols, rows: nextRows }, { requestTimeoutMs: REQUEST_MS }); }
+        try { if (!disconnected && !ended) await sandbox.pty.resize(pty.pid, { cols: nextCols, rows: nextRows }, { requestTimeoutMs: REQUEST_MS }); }
         catch { throw new Error('Unable to resize sandbox terminal.'); }
       },
       async disconnect() {
         if (disconnected) return;
         disconnected = true;
+        exitListeners.clear();
         // Kill only this tmux client PTY. The detached tmux server and its Codex
         // session survive, without accumulating abandoned PTYs on reconnect.
         let failed = false;

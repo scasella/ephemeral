@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ShellWorkspaceClient, mountedShells, operationCompleted, parsePendingShellOperation, parseShellSnapshot, reconcileShellSelection, type ShellOperation, type ShellSnapshot, type WorkspaceShell } from './shell-workspace';
+import { ShellWorkspaceClient, mountedShells, operationCompleted, parsePendingShellOperation, parseShellSnapshot, reconcileShellSelection, shellNameValue, type ShellOperation, type ShellSnapshot, type WorkspaceShell } from './shell-workspace';
 import { terminalSocketPath } from './terminal-connection';
 
 const requestId = '95cfd762-c498-4860-9c85-64527670028b';
@@ -15,10 +15,10 @@ describe('shell request recovery', () => {
     const transport = vi.fn();
     const persist = vi.fn();
     const client = new ShellWorkspaceClient('machine', () => {}, transport, null, persist);
-    for (const name of ['', '   ', 'bad\u0085name', 'bad\u0000name', 'a'.repeat(81)]) {
+    for (const name of ['', '   ', 'bad\u0085name', 'bad\u0000name', '\uD800', '\uDC00', 'a'.repeat(81), '😀'.repeat(81)]) {
       await client.perform({ kind: 'create', requestId, name });
       expect(client.state.pending).toBeNull();
-      expect(client.state.error).toContain('1–80 characters');
+      expect(client.state.error).toContain('1–80 Unicode characters');
     }
     expect(transport).not.toHaveBeenCalled();
     expect(persist).not.toHaveBeenCalled();
@@ -188,6 +188,40 @@ describe('shell request recovery', () => {
   });
 });
 
+describe('Unicode shell names', () => {
+  it.each(['😀'.repeat(41), '😀'.repeat(80), `${'a'.repeat(40)}${'😀'.repeat(40)}`, 'e\u0301'.repeat(40)])('preserves an accepted name through saved metadata and pending operations: %s', name => {
+    expect(shellNameValue(`  ${name}  `)).toBe(name);
+    const saved = JSON.parse(JSON.stringify(snapshot({ ...secondary, name })));
+    expect(parseShellSnapshot(saved).shells[1].name).toBe(name);
+    for (const kind of ['create', 'rename'] as const) {
+      const operation = { kind, requestId, ...(kind === 'rename' ? { shellId } : {}), name: `  ${name}  ` };
+      expect(parsePendingShellOperation(JSON.stringify(operation))).toEqual({ ...operation, name });
+    }
+  });
+
+  it.each(['😀'.repeat(81), 'e\u0301'.repeat(41), '\uD800', '\uDC00', 'bad\uD800name', '\nShell', 'Shell\u0085'])('rejects invalid names in saved metadata and pending operations: %s', name => {
+    expect(shellNameValue(name)).toBeNull();
+    expect(() => parseShellSnapshot(snapshot({ ...secondary, name }))).toThrow('saved shell list');
+    for (const kind of ['create', 'rename'] as const) {
+      expect(parsePendingShellOperation(JSON.stringify({ kind, requestId, shellId, name }))).toBeNull();
+    }
+  });
+
+  it('sends and settles an 80-code-point create without losing its intent or saved shell', async () => {
+    const name = '😀'.repeat(80);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(snapshot({ ...secondary, name })))));
+    const persist = vi.fn();
+    const client = new ShellWorkspaceClient('machine', () => {}, undefined, null, persist);
+    await client.perform({ kind: 'create', requestId, name: `  ${name}  ` });
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toEqual({ requestId, name });
+    expect(client.state.pending).toBeNull();
+    expect(client.state.error).toBe('');
+    expect(mountedShells(client.state.snapshot)[0].name).toBe(name);
+    expect(persist).toHaveBeenLastCalledWith(null);
+    client.dispose();
+  });
+});
+
 it('validates saved identities, kinds, lifecycle states, names and request IDs before accepting metadata', () => {
   expect(parseShellSnapshot(snapshot(secondary))).toEqual(snapshot(secondary));
   expect(parseShellSnapshot(snapshot({ ...secondary, id: shellId.toUpperCase(), requestId: requestId.toUpperCase() })).shells[1]).toEqual(secondary);
@@ -202,4 +236,60 @@ it('routes Codex compatibly and reconnects secondary to its exact encoded identi
   expect(terminalSocketPath('machine /id')).toBe('/api/sessions/machine%20%2Fid/terminal');
   expect(terminalSocketPath('machine', shellId)).toBe(`/api/sessions/machine/terminal?shell=${shellId}`);
   expect(terminalSocketPath('machine', 'bad&shell')).toBe('/api/sessions/machine/terminal?shell=bad%26shell');
+});
+
+describe('explicit primary shell recovery', () => {
+  it('sends one strict recovery request, blocks competing operations, and accepts only an open primary reply', async () => {
+    const reply = deferred<ShellSnapshot>();
+    const transport = vi.fn().mockReturnValue(reply.promise);
+    const persist = vi.fn();
+    const client = new ShellWorkspaceClient('machine /id', () => {}, transport, null, persist);
+    expect(transport).not.toHaveBeenCalled();
+    const recovery = client.recoverPrimary();
+    expect(client.state.recoveringPrimary).toBe(true);
+    expect(client.state.sending).toBe(true);
+    await client.recoverPrimary(); await client.refresh();
+    await client.perform({ kind: 'create', requestId, name: 'Shell' });
+    expect(transport).toHaveBeenCalledExactlyOnceWith('/sessions/machine%20%2Fid/shells/codex/recover', {}, expect.any(AbortSignal));
+    reply.resolve(snapshot(secondary));
+    expect(await recovery).toBe(true);
+    expect(client.state.snapshot).toEqual(snapshot(secondary));
+    expect(client.state.recoveringPrimary).toBe(false);
+    expect(client.state.sending).toBe(false);
+    expect(persist).not.toHaveBeenCalled();
+    client.dispose();
+  });
+
+  it('keeps failure actionable and permits another explicit recovery without automatically retrying', async () => {
+    const transport = vi.fn().mockRejectedValueOnce(new Error('Shell could not be inspected.')).mockResolvedValueOnce(snapshot());
+    const client = new ShellWorkspaceClient('machine', () => {}, transport);
+    expect(await client.recoverPrimary()).toBe(false);
+    expect(client.state.error).toContain('Reconnect to check');
+    expect(client.state.sending).toBe(false);
+    expect(client.state.recoveringPrimary).toBe(false);
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(await client.recoverPrimary()).toBe(true);
+    expect(client.state.error).toBe('');
+    client.dispose();
+  });
+
+  it('does not report recovery success for a dead primary, stale reads, or a disposed workspace', async () => {
+    const old = deferred<ShellSnapshot>();
+    const transport = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce(snapshot());
+    const client = new ShellWorkspaceClient('machine', () => {}, transport);
+    const refresh = client.refresh();
+    expect(await client.recoverPrimary()).toBe(true);
+    old.resolve({ ...snapshot(), shells: [{ ...primary, state: 'closed' }] }); await refresh;
+    expect(client.state.snapshot?.shells[0].state).toBe('open');
+    client.dispose();
+    const dead = new ShellWorkspaceClient('machine', () => {}, vi.fn().mockResolvedValue({ ...snapshot(), shells: [{ ...primary, state: 'closed' }] }));
+    expect(await dead.recoverPrimary()).toBe(false);
+    expect(dead.state.error).toContain('not ready'); dead.dispose();
+    const late = deferred<ShellSnapshot>(); const notify = vi.fn();
+    const disposed = new ShellWorkspaceClient('machine', notify, vi.fn().mockReturnValue(late.promise));
+    const request = disposed.recoverPrimary(); disposed.dispose(); const count = notify.mock.calls.length;
+    late.resolve(snapshot());
+    expect(await request).toBe(false);
+    expect(notify).toHaveBeenCalledTimes(count);
+  });
 });

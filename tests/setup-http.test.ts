@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from '../server/app.js';
+import { createLiveApplication } from './helpers/create-live-application.js';
 import { readConfig } from '../server/config.js';
 import { digest, seal } from '../server/auth/crypto.js';
 import type { Session } from '../server/contracts.js';
@@ -30,11 +32,13 @@ describe('repository setup HTTP boundary', () => {
     directory = await mkdtemp(join(tmpdir(), 'ep-setup-http-'));
     const key = Buffer.alloc(32, 1).toString('base64');
     const config = readConfig({ EPHEMERAL_MODE: 'preview', DATA_DIR: directory, PUBLIC_URL: 'http://localhost:4327', ENCRYPTION_KEY: key, ALLOWED_GITHUB_IDS: '42,99' });
-    application = await createApplication({ ...config, mode: 'live' });
+    application = await createLiveApplication({ ...config, mode: 'live' });
     await new Promise<void>(resolve => application.server.listen(0, '127.0.0.1', resolve));
     const address = application.server.address(); if (!address || typeof address === 'string') throw new Error('No server address'); origin = `http://127.0.0.1:${address.port}`;
     await application.db.query('INSERT INTO browser_sessions(hash,user_id,login,avatar_url,credential,expires_at) VALUES($1,$2,$3,$4,$5,$6)',
       [digest('owner-browser'), '42', 'owner', '', seal('test-credential', key), new Date(Date.now() + 3600_000).toISOString()]);
+    await application.db.query('INSERT INTO browser_sessions(hash,user_id,login,avatar_url,credential,expires_at) VALUES($1,$2,$3,$4,$5,$6)',
+      [digest('second-browser'), '99', 'second', '', seal('test-credential', key), new Date(Date.now() + 3600_000).toISOString()]);
   }, 30_000);
   afterAll(async () => { await application?.close(); await rm(directory, { recursive: true, force: true }); }, 30_000);
   beforeEach(() => { stubs.authorize.mockReset().mockResolvedValue(undefined); stubs.run.mockReset().mockResolvedValue({ status: 'succeeded', exitCode: 0 }); });
@@ -77,6 +81,121 @@ describe('repository setup HTTP boundary', () => {
     const retained = await request(s.id).then(r => r.json()); expect(retained.run.recipe.command).toBe('npm test'); expect(retained.run.exitCode).toBe(0);
     expect((await request(s.id, 'PUT', input)).status).toBe(409);
     expect((await request(s.id, 'POST', { recipeVersion: changed.recipe.version }, {}, '/runs')).status).toBe(409);
+  });
+
+  it('projects only redacted retained output while a split credential is in flight and after clipping', async () => {
+    const s = await insert('http-redaction'), secret = randomBytes(32).toString('hex');
+    let emit!: (text: string) => void, finish!: () => void;
+    stubs.run.mockImplementationOnce((_session, _input, onOutput) => {
+      emit = onOutput; return new Promise(resolve => { finish = () => resolve({ status: 'succeeded', exitCode: 0 }); });
+    });
+    const saved = await request(s.id, 'PUT', input).then(r => r.json());
+    expect((await request(s.id, 'POST', { recipeVersion: saved.recipe.version }, {}, '/runs')).status).toBe(202);
+    await vi.waitFor(() => expect(emit).toBeTypeOf('function'));
+    emit('safe progress\n{"id_token":"' + secret.slice(0, 18));
+    let projection: { run: { output: string; truncated: boolean; recipe: { command: string } } };
+    await vi.waitFor(async () => {
+      projection = await request(s.id).then(r => r.json());
+      expect(projection.run.output.includes('safe progress')).toBe(true);
+    }, { timeout: 5000 });
+    expect(JSON.stringify(projection!).includes(secret.slice(0, 8))).toBe(false);
+    emit('\x1b['); emit('0m' + secret.slice(18) + '"}\n');
+    emit('x'.repeat(65520) + '\n{"refresh_token":"' + secret.slice(0, 14));
+    emit(secret.slice(14) + '"}\n'); emit('final failure detail without newline'); finish();
+    await vi.waitFor(async () => expect((await request(s.id).then(r => r.json())).run?.status).toBe('succeeded'));
+    projection = await request(s.id).then(r => r.json());
+    const stored = await application.db.query<{ data: { output: string } }>('SELECT data FROM session_setup_runs WHERE session_id=$1', [s.id]);
+    expect(JSON.stringify(projection).includes(secret.slice(0, 8))).toBe(false);
+    expect(stored.rows[0]!.data.output.includes(secret.slice(0, 8))).toBe(false);
+    expect(projection.run.truncated).toBe(true);
+    expect(Buffer.byteLength(projection.run.output)).toBeLessThanOrEqual(65536);
+    expect(projection.run.output).toContain('safe progress');
+    expect(projection.run.output).toContain('final failure detail without newline');
+    expect(stored.rows[0]!.data.output).toBe(projection.run.output);
+    expect(projection.run.recipe.command).toBe(input.command);
+  });
+
+  it('persists authorization failure before invocation and permits an explicit retry of that saved version', async () => {
+    const s = await insert('http-prelaunch-retry');
+    const saved = await request(s.id, 'PUT', input).then(r => r.json());
+    stubs.authorize.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('private authorization detail'));
+    const started = await request(s.id, 'POST', { recipeVersion: saved.recipe.version }, {}, '/runs');
+    expect(started.status).toBe(202);
+    await vi.waitFor(async () => expect((await request(s.id).then(r => r.json())).run?.status).toBe('failed'));
+    const failed = await request(s.id).then(r => r.json());
+    expect(failed.run).toMatchObject({ reason: 'authorization_failed', invocationStarted: false, blockedUntil: null, startedAt: null, exitCode: null });
+    expect(failed.run.error).not.toContain('private authorization detail');
+    expect(stubs.run).not.toHaveBeenCalled();
+    const retry = await request(s.id, 'POST', { recipeVersion: saved.recipe.version }, {}, '/runs');
+    expect(retry.status).toBe(202);
+    await vi.waitFor(async () => expect((await request(s.id).then(r => r.json())).run?.status).toBe('succeeded'));
+    const completed = await request(s.id).then(r => r.json());
+    expect(completed.run.id).not.toBe(failed.run.id);
+    expect(completed.run.recipe.version).toBe(saved.recipe.version);
+    expect(stubs.run).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets another session start while repository authorization is pending for one session', async () => {
+    const first = await insert('http-queue-first');
+    const second = await insert('http-queue-second', { userId: '99' });
+    const secondHeaders = { Cookie: 'ephemeral=second-browser' };
+    const savedFirst = await request(first.id, 'PUT', input).then(r => r.json());
+    const savedSecond = await request(second.id, 'PUT', input, secondHeaders).then(r => r.json());
+    let release!: () => void;
+    const authorization = new Promise<void>(resolve => { release = resolve; });
+    stubs.authorize.mockImplementation(async (s: Session) => { if (s.id === first.id) await authorization; });
+    const pending = request(first.id, 'POST', { recipeVersion: savedFirst.recipe.version }, {}, '/runs');
+    await vi.waitFor(() => expect(stubs.authorize).toHaveBeenCalledWith(expect.objectContaining({ id: first.id })));
+    let secondResponse: Response | undefined;
+    const independent = request(second.id, 'POST', { recipeVersion: savedSecond.recipe.version }, secondHeaders, '/runs').then(response => { secondResponse = response; });
+    try {
+      await vi.waitFor(() => expect(secondResponse?.status).toBe(202));
+      await vi.waitFor(() => expect(stubs.run).toHaveBeenCalledWith(expect.objectContaining({ id: second.id }), expect.anything(), expect.any(Function), expect.any(AbortSignal)));
+    } finally {
+      release();
+      await independent;
+      expect((await pending).status).toBe(202);
+    }
+    await vi.waitFor(async () => expect((await request(first.id).then(r => r.json())).run?.status).toBe('succeeded'));
+    await vi.waitFor(async () => expect((await request(second.id, 'GET', undefined, secondHeaders).then(r => r.json())).run?.status).toBe('succeeded'));
+  });
+
+  it('records an explicit user cancellation separately from stopping the machine', async () => {
+    async function startAbortable(id: string) {
+      const s = await insert(id);
+      stubs.run.mockImplementationOnce((_session, _input, onOutput, signal: AbortSignal) => new Promise(resolve => {
+        signal.addEventListener('abort', () => { onOutput('termination confirmed\n'); resolve({ status: 'cancelled', exitCode: null }); }, { once: true });
+      }));
+      const saved = await request(s.id, 'PUT', input).then(r => r.json());
+      const started = await request(s.id, 'POST', { recipeVersion: saved.recipe.version }, {}, '/runs').then(r => r.json());
+      await vi.waitFor(async () => expect((await request(s.id).then(r => r.json())).run?.status).toBe('running'));
+      return { s, runId: started.run.id };
+    }
+    const user = await startAbortable('http-user-cancel');
+    expect((await request(user.s.id, 'POST', {}, {}, `/runs/${user.runId}/cancel`)).status).toBe(200);
+    await vi.waitFor(async () => expect((await request(user.s.id).then(r => r.json())).run?.status).toBe('cancelled'));
+    const cancelled = await request(user.s.id).then(r => r.json());
+    expect(cancelled.run).toMatchObject({ reason: 'user_cancelled', invocationStarted: true, blockedUntil: null, output: 'termination confirmed\n' });
+
+    const ended = await startAbortable('http-session-stop');
+    expect((await fetch(`${origin}/api/sessions/${ended.s.id}/stop`, { method: 'POST', headers, body: '{}' })).status).toBe(200);
+    await vi.waitFor(async () => expect((await request(ended.s.id).then(r => r.json())).run?.finishedAt).toBeTruthy());
+    expect((await request(ended.s.id).then(r => r.json())).run).toMatchObject({ status: 'interrupted', reason: 'session_ended', invocationStarted: true, blockedUntil: null });
+  });
+
+  it('retains the execution hold when provider completion is unknown and does not replay on status reads', async () => {
+    const s = await insert('http-unconfirmed');
+    const saved = await request(s.id, 'PUT', input).then(r => r.json());
+    stubs.run.mockRejectedValueOnce(new Error('private transport failure'));
+    expect((await request(s.id, 'POST', { recipeVersion: saved.recipe.version }, {}, '/runs')).status).toBe(202);
+    await vi.waitFor(async () => expect((await request(s.id).then(r => r.json())).run?.status).toBe('interrupted'));
+    const unknown = await request(s.id).then(r => r.json());
+    expect(unknown.run).toMatchObject({ reason: 'completion_unconfirmed', invocationStarted: true });
+    expect(Date.parse(unknown.run.blockedUntil)).toBeGreaterThan(Date.now());
+    expect(unknown.run.error).not.toContain('private transport failure');
+    expect((await request(s.id, 'POST', { recipeVersion: saved.recipe.version }, {}, '/runs')).status).toBe(409);
+    expect((await request(s.id).then(r => r.json())).run.id).toBe(unknown.run.id);
+    expect(stubs.run).toHaveBeenCalledTimes(1);
   });
 
   it('refuses access loss and lifecycle changes during authorization without launching a command', async () => {

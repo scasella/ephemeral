@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { requestSetup, setupDraft, setupDraftMatches, setupRunActive, setupRunBlocked, setupRunSummary, SetupLoader, validateSetupDraft, type SetupAction, type SetupState } from './repository-setup';
+import { requestSetup, setupOutputNotice, setupDraft, setupDraftMatches, setupRunActive, setupRunBlocked, setupRunGuidance, setupRunSummary, SetupLoader, validateSetupDraft, type SetupAction, type SetupState } from './repository-setup';
 
 const recipe = { version: 'recipe-v1', label: 'Install dependencies', command: 'npm ci', timeoutSeconds: 120, updatedAt: '2026-10-14T14:00:00Z' };
 const state: SetupState = { recipe, run: null, mode: 'live' };
@@ -28,6 +28,43 @@ describe('setup recipe and recorded outcomes', () => {
     expect(setupRunBlocked({ ...run, status: 'interrupted' }, Date.parse('2026-10-14T14:01:00Z'))).toBe(true);
     expect(setupRunBlocked({ ...run, status: 'interrupted' }, Date.parse('2026-10-14T14:02:00Z'))).toBe(false);
   });
+  it('describes head and tail retention only for records that used that format', () => {
+    const run = { id: 'run', sessionId: 'session', recipe, status: 'succeeded' as const, output: 'retained', truncated: true, exitCode: 0,
+      startedAt: null, finishedAt: null, error: null, blockedUntil: null };
+    expect(setupOutputNotice(run)).toBe('Saved output exceeded its limit and was truncated.');
+    expect(setupOutputNotice({ ...run, outputRetention: 'head_tail' })).toContain('beginning and end');
+    expect(setupOutputNotice({ ...run, outputRetention: 'head_tail' })).toContain('final tail');
+    expect(setupOutputNotice({ ...run, truncated: false })).toBeNull();
+  });
+  it('explains retryable failures before execution without suggesting the command ran', () => {
+    const run = { id: 'run', sessionId: 'session', recipe, status: 'failed' as const, output: '', truncated: false, exitCode: null, startedAt: null,
+      finishedAt: '2026-10-14T14:00:00Z', error: 'Untrusted provider text', blockedUntil: null, invocationStarted: false };
+    for (const reason of ['authorization_failed', 'persistence_failed', 'server_shutdown', 'timeout', 'provider_unavailable'] as const) {
+      const result = { ...run, reason };
+      expect(setupRunSummary(result)).toMatch(/^Did not start/);
+      expect(setupRunGuidance(result)).toMatch(/before|explicitly|retry/i);
+      expect(setupRunGuidance(result)).not.toMatch(/command may have run|Untrusted/);
+      expect(setupRunBlocked(result, Date.now())).toBe(false);
+    }
+    expect(setupRunGuidance({ ...run, reason: 'session_ended' })).toContain('available machine');
+  });
+  it('distinguishes user cancellation, lifecycle stops, and uncertain completion while keeping legacy rows readable', () => {
+    const run = { id: 'run', sessionId: 'session', recipe, output: '', truncated: false, exitCode: null, startedAt: '2026-10-14T14:00:00Z', finishedAt: '2026-10-14T14:00:01Z', error: null, blockedUntil: null };
+    const cancelled = { ...run, status: 'cancelled' as const, invocationStarted: true };
+    expect(setupRunSummary({ ...cancelled, reason: 'user_cancelled' })).toContain('cancelled by you');
+    for (const reason of ['session_ended', 'authorization_failed', 'persistence_failed', 'server_shutdown'] as const) {
+      expect(setupRunSummary({ ...cancelled, reason })).not.toContain('by you');
+      expect(setupRunGuidance({ ...cancelled, reason })).not.toContain('You requested cancellation');
+    }
+    const uncertain = { ...cancelled, status: 'interrupted' as const, reason: 'timeout' as const, blockedUntil: '2026-10-14T14:02:00Z' };
+    expect(setupRunGuidance(uncertain)).toContain('completion could not be confirmed');
+    expect(setupRunGuidance(uncertain)).toContain('never replayed automatically');
+    expect(setupRunSummary({ ...run, status: 'cancelled' })).toBe('Cancelled');
+    expect(setupRunGuidance({ ...run, status: 'cancelled' })).toBeNull();
+    expect(setupRunGuidance({ ...run, status: 'interrupted' })).toContain('may have run');
+    expect(setupRunGuidance({ ...run, status: 'running', reason: 'user_cancelled' })).toBeNull();
+  });
+
 });
 
 describe('setup API requests', () => {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { CreateSessionInput, Database, Session, SessionRepository } from './contracts.js';
 import type { HandoffNotesService } from './handoff-notes.js';
+import { SessionNotCreatedError } from './core/provisioning.js';
 import { SESSION_UUID } from './core/continuation.js';
 
 export interface ContinuationPreview {
@@ -137,6 +138,13 @@ export async function createContinuationController(db: Database, repo: SessionRe
       // Creation may have persisted the session before a later write failed, or another server created it.
       const recovered = await existing(row, source);
       if (recovered) return recovered;
+      if (error instanceof SessionNotCreatedError) {
+        // A trusted pre-insert failure permits a retry of this same reserved target.
+        // Transport/storage errors remain creating even when a recovery read is empty.
+        await db.query(`UPDATE ephemeral_continuation_requests SET status='reserved'
+          WHERE user_id=$1 AND source_id=$2 AND request_id=$3 AND status='creating'`, params);
+        throw new ContinuationError(409, error.message, true);
+      }
       throw error;
     }
   }

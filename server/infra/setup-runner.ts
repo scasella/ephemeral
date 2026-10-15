@@ -1,10 +1,12 @@
+import { createSetupOutputBuffer } from '../setup-output.js';
+import { createSetupOutputRedactor } from '../setup-redaction.js';
 import type { SetupCommandResult } from '../contracts.js';
 
 export const SETUP_OUTPUT_LIMIT = 64 * 1024;
 export const SETUP_CLEANUP_MS = 2_000;
 
 /** This source is executed only inside the VM. Local tests use an isolated fixture. */
-export function setupRunnerSource(input: { command: string; cwd: string; deadlineAt: number; controlDirectory: string }): string {
+export function setupRunnerSource(input: { command: string; cwd: string; deadlineAt: number; controlDirectory: string; credentialPath?: string }): string {
   return `
 const fs = require('node:fs');
 const {spawn} = require('node:child_process');
@@ -15,43 +17,68 @@ const emit = (value, reserved = false) => {
   if (!reserved && value.type === 'output' && wireBytes + Buffer.byteLength(line) > 128 * 1024 - 1024) return false;
   wireBytes += Buffer.byteLength(line); process.stdout.write(line); return true;
 };
-const secrets = [...new Set(['EPHEMERAL_GATEWAY_TOKEN', 'E2B_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY']
-  .map(key => process.env[key]).filter(value => value && value.length >= 4))];
-const keep = Math.max(0, ...secrets.map(value => value.length - 1));
-let remaining = ${SETUP_OUTPUT_LIMIT}, truncated = false, child, ending = false;
-const redact = text => secrets.reduce((out, value) => out.split(value).join('[redacted]'), text);
-const output = text => {
-  const bytes = Buffer.from(text);
-  const allowance = remaining;
-  let dropped = bytes.length > allowance;
-  if (remaining > 0) {
-    const selected = bytes.subarray(0, remaining);
-    remaining -= selected.length;
-    if (selected.length && !emit({type:'output', data:selected.toString('base64')})) { remaining = 0; dropped = true; }
-  }
-  if (dropped && !truncated) {
-    truncated = true; emit({type:'output', data:Buffer.from('\\n[Setup output limit reached; further output omitted.]\\n').toString('base64')}, true);
-  }
+const secrets = ['EPHEMERAL_GATEWAY_TOKEN', 'E2B_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY']
+  .map(key => process.env[key]).filter(value => value && value.length >= 4);
+// Fixed VM path, never the control-plane HOME. No symlink/device reads, bounded
+// bytes/depth, and the file must belong to the user running setup.
+let credentialsAvailable = true;
+try {
+  const descriptor = fs.openSync(config.credentialPath || '/home/user/.codex/auth.json', fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.uid !== process.getuid() || stat.size > 65536) throw new Error('Invalid credential file');
+    const bytes = Buffer.alloc(65537);
+    const count = fs.readSync(descriptor, bytes, 0, bytes.length, 0);
+    if (count > 65536) throw new Error('Invalid credential file');
+    const auth = JSON.parse(bytes.subarray(0, count).toString('utf8'));
+    if (!auth || typeof auth !== 'object' || Array.isArray(auth)) throw new Error('Invalid credential file');
+    const collect = (value, depth = 0) => {
+      if (depth > 8) throw new Error('Invalid credential file');
+      if (!value || typeof value !== 'object') return;
+      for (const [key, entry] of Object.entries(value)) {
+        if (typeof entry === 'string' && /token|api[_-]?key|auth[_-]?key|secret|password/i.test(key) && entry.length >= 4) {
+          if (entry.length > 16384 || secrets.length >= 128) throw new Error('Invalid credential file');
+          secrets.push(entry);
+        } else if (entry && typeof entry === 'object') collect(entry, depth + 1);
+      }
+    };
+    collect(auth);
+  } finally { fs.closeSync(descriptor); }
+} catch (error) { if (error.code !== 'ENOENT') credentialsAvailable = false; }
+let child, ending = false, completed = false;
+const __name = target => target; // esbuild/tsx may annotate serialized function names.
+const createSanitizer = (${createSetupOutputRedactor.toString()});
+const createOutputBuffer = (${createSetupOutputBuffer.toString()});
+const retained = createOutputBuffer(${SETUP_OUTPUT_LIMIT});
+const markerBytes = Buffer.byteLength('\\n[Setup output limit reached; omitted middle output.]\\n');
+const prefixLimit = Math.floor((${SETUP_OUTPUT_LIMIT} - markerBytes) / 2);
+let sent = '';
+const send = text => { if (text) { emit({type:'output', data:Buffer.from(text).toString('base64')}, true); sent += text; } };
+const sanitizedOutput = text => {
+  if (completed) return;
+  retained.write(text);
+  if (Buffer.byteLength(sent) >= prefixLimit - 4096) return;
+  // The fixed prefix stays stable when the bounded collector starts keeping a
+  // tail. Batch frames so verbose tiny lines cannot exhaust the wire budget.
+  const bytes = Buffer.from(retained.snapshot().output);
+  let end = Math.min(bytes.length, prefixLimit);
+  if (end < bytes.length) while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  const available = bytes.subarray(Buffer.byteLength(sent), end).toString('utf8');
+  if ((!sent && available) || Buffer.byteLength(available) >= 4096) send(available);
 };
-// Retain a suffix separately for each stream so a split credential is never emitted.
+const output = text => { const sanitizer = createSanitizer(sanitizedOutput, {secrets, streaming:true}); sanitizer.write(text); sanitizer.end(); };
+// Keep separate pending lines/control state: stderr must never break up a
+// credential that stdout is still writing (or vice versa).
 const streams = [];
 const attach = stream => {
-  let tail = '';
+  const sanitizer = createSanitizer(sanitizedOutput, {secrets, streaming:true});
   stream.setEncoding('utf8');
-  stream.on('data', chunk => {
-    const text = tail + chunk;
-    let boundary = Math.max(0, text.length - keep);
-    // Do not cut a matched secret across the emission boundary.
-    for (const secret of secrets) {
-      let start = text.indexOf(secret);
-      while (start !== -1) {
-        if (start < boundary && start + secret.length > boundary) boundary = start;
-        start = text.indexOf(secret, start + 1);
-      }
-    }
-    output(redact(text.slice(0, boundary))); tail = text.slice(boundary);
+  stream.on('data', chunk => { if (!completed) sanitizer.write(chunk); });
+  streams.push(() => {
+    // Read buffered data before EOF/cancellation flush, then reject late events.
+    let chunk; while ((chunk = stream.read()) !== null) sanitizer.write(chunk);
+    stream.pause(); sanitizer.end();
   });
-  streams.push(() => { stream.pause(); output(redact(tail)); tail = ''; });
 };
 const groupAlive = pid => {
   if (process.platform === 'linux') {
@@ -82,6 +109,9 @@ const finish = async (status, exitCode) => {
     } catch { confirmed = false; }
   }
   for (const flush of streams) flush();
+  const finalOutput = retained.snapshot().output;
+  send(finalOutput.slice(sent.length));
+  completed = true;
   emit(confirmed ? {type:'result', status, exitCode} : {type:'uncertain'});
   try { fs.rmSync(config.controlDirectory, {recursive:true, force:true}); } catch {}
   // Explicit exit also bounds streams retained by an escaped descendant.
@@ -94,7 +124,8 @@ const cancellation = setInterval(() => { if (cancelled()) finish('cancelled', nu
 process.on('SIGTERM', () => finish('cancelled', null));
 process.on('SIGINT', () => finish('cancelled', null));
 process.stdout.on('error', () => {});
-if (cancelled()) finish('cancelled', null);
+if (!credentialsAvailable) { output('Setup could not safely inspect local credentials.\\n'); finish('failed', null); }
+else if (cancelled()) finish('cancelled', null);
 else if (config.deadlineAt <= Date.now()) finish('timed_out', null);
 else {
   const env = {...process.env, GIT_TERMINAL_PROMPT:'0'};

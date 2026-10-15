@@ -5,7 +5,7 @@ import { E2BProvider } from '../server/infra/e2b.js';
 import { PreviewProvider } from '../server/preview.js';
 import { shellCommand, shellTarget, SHELL_FRAME } from '../server/infra/terminal-shell.js';
 
-const stubs = vi.hoisted(() => ({ get: vi.fn(), run: vi.fn(), create: vi.fn(), sendInput: vi.fn(), kill: vi.fn(), disconnect: vi.fn() }));
+const stubs = vi.hoisted(() => ({ get: vi.fn(), run: vi.fn(), create: vi.fn(), sendInput: vi.fn(), kill: vi.fn(), disconnect: vi.fn(), wait: vi.fn() }));
 vi.mock('e2b', async importOriginal => {
   const actual = await importOriginal<typeof import('e2b')>();
   return { ...actual, ApiClient: class { api = { GET: stubs.get }; }, Sandbox: class extends actual.Sandbox {
@@ -27,7 +27,8 @@ const result = (state: string) => ({ exitCode: 0, stdout: JSON.stringify({ state
 const provider = () => new E2BProvider({ apiKey: 'test-only-key', templateId: 'test-template', gatewayUrl: 'https://gateway.example.test' });
 beforeEach(() => {
   stubs.get.mockReset().mockResolvedValue({ data: info() }); stubs.run.mockReset().mockResolvedValue(result('open'));
-  stubs.disconnect.mockReset().mockResolvedValue(undefined); stubs.create.mockReset().mockResolvedValue({ pid: 123, disconnect: stubs.disconnect });
+  stubs.wait.mockReset().mockImplementation(() => new Promise(() => {}));
+  stubs.disconnect.mockReset().mockResolvedValue(undefined); stubs.create.mockReset().mockResolvedValue({ pid: 123, disconnect: stubs.disconnect, wait: stubs.wait });
   stubs.sendInput.mockReset().mockResolvedValue(undefined); stubs.kill.mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
@@ -80,6 +81,52 @@ describe('supplemental shell provider boundaries', () => {
     stubs.run.mockResolvedValue(result('closed'));
     expect(await p.closeShell(session(), id)).toBe('closed'); expect(await p.closeShell(session(), id)).toBe('closed');
     expect(stubs.kill).not.toHaveBeenCalled();
+  });
+
+  it('recovers only a verified running primary and never connects, extends, or destroys the VM', async () => {
+    const p = provider(), connect = vi.spyOn(Sandbox, 'connect'), timeout = vi.spyOn(Sandbox, 'setTimeout'), kill = vi.spyOn(Sandbox, 'kill');
+    expect(await p.recoverPrimaryShell(session())).toBe('open');
+    expect(stubs.run.mock.calls[0][0]).toContain('recover');
+    expect(connect).not.toHaveBeenCalled(); expect(timeout).not.toHaveBeenCalled(); expect(kill).not.toHaveBeenCalled(); expect(stubs.kill).not.toHaveBeenCalled();
+    for (const change of [{ state: 'paused' }, { endAt: new Date(0).toISOString() }, { metadata: { ...info().metadata, ephemeral_user_id: 'foreign' } }]) {
+      stubs.get.mockResolvedValueOnce({ data: { ...info(), ...change } });
+      await expect(p.recoverPrimaryShell(session())).rejects.toThrow('Primary shell recovery could not be confirmed.');
+    }
+    await expect(p.recoverPrimaryShell({ ...session(), state: 'ended' })).rejects.toThrow('Primary shell recovery could not be confirmed.');
+    expect(stubs.run).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['before', 'during', 'after'] as const)('reports PTY wait completion %s listener registration and replays to late listeners', async when => {
+    let finish!: () => void;
+    if (when === 'before') stubs.wait.mockResolvedValueOnce({ exitCode: 0 });
+    else stubs.wait.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const connection = await provider().connectTerminal('sandbox-a', () => {}, 80, 24);
+    if (when === 'during') finish(); // Settled wait whose completion callback has not run yet.
+    const listener = vi.fn(); const unsubscribe = connection.onExit!(listener);
+    if (when === 'after') finish();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    const late = vi.fn(); connection.onExit!(late); expect(late).toHaveBeenCalledOnce(); unsubscribe();
+    await expect(connection.write('late')).rejects.toThrow('disconnected');
+    await connection.disconnect(); expect(stubs.kill).toHaveBeenCalledWith(123, expect.anything());
+    const detached = vi.fn(); connection.onExit!(detached); expect(detached).not.toHaveBeenCalled();
+  });
+
+  it('isolates exit observer failures while notifying every observer once', async () => {
+    let finish!: () => void; stubs.wait.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const connection = await provider().connectTerminal('sandbox-a', () => {}, 80, 24), next = vi.fn();
+    connection.onExit!(() => { throw new Error('observer failed'); }); connection.onExit!(next); finish();
+    await vi.waitFor(() => expect(next).toHaveBeenCalledOnce());
+    expect(() => connection.onExit!(() => { throw new Error('late observer failed'); })).not.toThrow();
+    await connection.disconnect();
+  });
+
+  it('masks wait transport failures and suppresses intentional disconnect exit notifications', async () => {
+    let reject!: (error: Error) => void; stubs.wait.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    const connection = await provider().connectTerminal('sandbox-a', () => {}, 80, 24), listener = vi.fn(); connection.onExit!(listener);
+    await connection.disconnect(); reject(new Error('private-provider-token')); await Promise.resolve(); expect(listener).not.toHaveBeenCalled();
+    stubs.wait.mockRejectedValueOnce(new Error('private-provider-token'));
+    const failed = await provider().connectTerminal('sandbox-a', () => {}, 80, 24), ended = vi.fn(); failed.onExit!(ended);
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledOnce()); await failed.disconnect();
   });
 
   it('preview labels the shell as simulation, echoes without executing, and only attaches explicitly opened shells', async () => {

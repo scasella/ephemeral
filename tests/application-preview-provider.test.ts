@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sandbox } from 'e2b';
 import type { Session } from '../server/contracts.js';
 import { E2BProvider } from '../server/infra/e2b.js';
+import { SandboxCreationError } from '../server/core/provisioning.js';
 import { APPLICATION_PREVIEW_UNAVAILABLE, isApplicationPreviewPort, privateApplicationPreviewTarget,
   type PreviewTokenStore } from '../server/infra/application-preview.js';
 import { PreviewProvider } from '../server/preview.js';
@@ -131,14 +132,22 @@ describe('private application preview transport', () => {
     const store = vault(); vi.mocked(store.save).mockRejectedValue(new Error(token));
     vi.spyOn(Sandbox, 'create').mockResolvedValue({ sandboxId: 'sandbox-a', trafficAccessToken: token } as Sandbox);
     const kill = vi.spyOn(Sandbox, 'kill').mockResolvedValue(true);
-    await expect(provider(store).create(session(), 'gateway')).rejects.toThrow('Sandbox creation could not be completed.');
+    const failure = await provider(store).create(session(), 'gateway').catch(error => error);
+    expect(failure).toBeInstanceOf(SandboxCreationError);
+    expect(failure).toMatchObject({ outcome: 'created', reason: 'resource_record_failed', knownSandboxId: 'sandbox-a' });
+    expect(failure.message).not.toContain(token);
+    expect(JSON.stringify(failure)).not.toContain(token);
     expect(kill).toHaveBeenCalledWith('sandbox-a', expect.anything());
   });
 
   it('declines missing native create tokens without using envd credentials', async () => {
     vi.spyOn(Sandbox, 'create').mockResolvedValue({ sandboxId: 'sandbox-a', envdAccessToken: 'CONTROL-SECRET' } as unknown as Sandbox);
     const kill = vi.spyOn(Sandbox, 'kill').mockResolvedValue(true), store = vault();
-    await expect(provider(store).create(session(), 'gateway')).rejects.toThrow('Sandbox creation could not be completed.');
+    const failure = await provider(store).create(session(), 'gateway').catch(error => error);
+    expect(failure).toBeInstanceOf(SandboxCreationError);
+    expect(failure).toMatchObject({ outcome: 'created', reason: 'resource_record_failed', knownSandboxId: 'sandbox-a' });
+    expect(failure.message).not.toContain('CONTROL-SECRET');
+    expect(JSON.stringify(failure)).not.toContain('CONTROL-SECRET');
     expect(store.save).not.toHaveBeenCalled(); expect(kill).toHaveBeenCalled();
   });
 

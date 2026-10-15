@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@xterm/xterm', () => ({ Terminal: class {} }));
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class {} }));
 vi.mock('@xterm/addon-search', () => ({ SearchAddon: class {} }));
-import Terminal from './Terminal';
+import Terminal, { TerminalConnectionControls } from './Terminal';
 import { ShellWorkspace } from './ShellWorkspace';
 
 const terminalMarkup = (visible = true) => renderToStaticMarkup(createElement(Terminal, {
@@ -45,4 +45,21 @@ describe('compact terminal presentation', () => {
     expect(html).not.toContain('>Close shell</button>');
     expect(html).toContain('Preview shells are simulated. No commands are executed.');
   });
+});
+
+
+it('offers recovery for disconnected primary shells, shows pending recovery, and protects living or supplemental shells', () => {
+  const render = (phase: 'connected' | 'disconnected' | 'error', recovering = false, primary = true) => renderToStaticMarkup(createElement(TerminalConnectionControls, {
+    status: { phase }, recovering, primary, onReconnect: () => {}, onRecover: () => {},
+  }));
+  const disconnected = render('disconnected');
+  expect(disconnected).toContain('>Recover shell</button>');
+  expect(disconnected).not.toContain('disabled');
+  expect(render('error')).not.toContain('disabled');
+  const pending = render('error', true);
+  expect(pending).toContain('>recovering</span>');
+  expect(pending).toContain('>Recovering shell…</button>');
+  expect(pending.match(/disabled=""/g)).toHaveLength(2);
+  expect(render('connected')).toContain('disabled=""');
+  expect(render('disconnected', false, false)).not.toContain('Recover shell');
 });

@@ -3,7 +3,7 @@ import { Terminal as XTerminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon, type ISearchResultChangeEvent } from '@xterm/addon-search';
 import { TerminalAttachment, terminalSocketPath, type TerminalState } from './terminal-connection';
-import { DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, SEARCH_HIGHLIGHT_LIMIT, TerminalViewport, isTerminalFindShortcut, readTerminalFontSize, saveTerminalFontSize, searchResultLabel, terminalFontSize } from './terminal-controls';
+import { DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, SEARCH_HIGHLIGHT_LIMIT, TerminalViewport, TerminalRecoveryFocus, isTerminalFindShortcut, readTerminalFontSize, saveTerminalFontSize, searchResultLabel, terminalFontSize } from './terminal-controls';
 import '@xterm/xterm/css/xterm.css';
 import './terminal.css';
 
@@ -17,12 +17,21 @@ export type TerminalProps = {
   branch?: string;
   expiresAt?: string;
   onStatusChange?: (status: string) => void;
+  onRecoverShell?: () => Promise<boolean>;
+  recoveringShell?: boolean;
+  unavailableReason?: string;
 };
 
 const SEARCH_OPTIONS = { decorations: { matchBackground: '#eee6be', matchBorder: '#b2a663', matchOverviewRuler: '#b2a663', activeMatchBackground: '#d4dcbf', activeMatchBorder: '#536843', activeMatchColorOverviewRuler: '#536843' } };
 const EMPTY_RESULTS: ISearchResultChangeEvent = { resultIndex: -1, resultCount: 0 };
 
-export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex', preview, visible = true, repository, branch, expiresAt, onStatusChange }: TerminalProps) {
+export function TerminalConnectionControls({ status, recovering, primary, onReconnect, onRecover }: {
+  status: TerminalState; recovering: boolean; primary: boolean; onReconnect: () => void; onRecover?: () => void;
+}) {
+  return <span className="terminal-connection"><span role="status" aria-live="polite">{recovering ? 'recovering' : status.phase}</span> · <button type="button" className="text-button" disabled={recovering} onClick={onReconnect} aria-label="Reconnect terminal" title="Reconnect to the same shell. The machine and its expiration stay the same.">Reconnect</button>{primary && onRecover && <button type="button" className="text-button" disabled={recovering || !['error', 'disconnected'].includes(status.phase)} onClick={onRecover} title="Recover a stopped primary shell on this machine. A living Codex shell is preserved.">{recovering ? 'Recovering shell…' : 'Recover shell'}</button>}</span>;
+}
+
+export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex', preview, visible = true, repository, branch, expiresAt, onStatusChange, onRecoverShell, recoveringShell = false, unavailableReason }: TerminalProps) {
   const shell = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
@@ -32,8 +41,14 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
   const viewportRef = useRef<TerminalViewport | null>(null);
   const resizeRef = useRef<() => void>(() => {});
   const reconnect = useRef<() => void>(() => {});
+  const unavailableRef = useRef(unavailableReason);
+  unavailableRef.current = unavailableReason;
+  const markUnavailable = useRef<(message: string) => void>(() => {});
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const recoveryFocus = useRef(new TerminalRecoveryFocus());
+  const recoveryRequest = useRef(0);
+  const recoveryInFlight = useRef(false);
   const notifyStatus = useRef(onStatusChange);
   notifyStatus.current = onStatusChange;
   const [status, setStatus] = useState<TerminalState>({ phase: 'connecting' });
@@ -91,8 +106,12 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
         notifyStatus.current?.(next.phase);
       },
       data => terminal.write(data),
-      resize,
+      () => {
+        resize();
+        if (recoveryFocus.current.ready(document.activeElement, document.body, visibleRef.current, Boolean(document.querySelector('dialog[open]')))) terminal.focus();
+      },
     );
+    markUnavailable.current = message => attachment.unavailable(message);
     viewportRef.current = viewport;
     resizeRef.current = resize;
     reconnect.current = () => { if (visibleRef.current) attachment.connect(true); };
@@ -107,10 +126,15 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
     observer.observe(host.current);
     window.addEventListener('resize', resize);
     resize();
-    attachment.connect();
+    if (unavailableRef.current) attachment.unavailable(unavailableRef.current);
+    else attachment.connect();
     return () => {
       disposed = true;
+      ++recoveryRequest.current;
+      recoveryInFlight.current = false;
+      recoveryFocus.current.cancel();
       reconnect.current = () => {};
+      markUnavailable.current = () => {};
       resizeRef.current = () => {};
       viewportRef.current = null;
       terminalRef.current = null;
@@ -125,9 +149,28 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
     };
   }, [sessionId, shellId]);
 
+  useEffect(() => {
+    const moved = (event: Event) => recoveryFocus.current.movedTo(event.target);
+    const navigating = (event: KeyboardEvent) => { if (event.key === 'Tab') recoveryFocus.current.cancel(); };
+    document.addEventListener('focusin', moved);
+    document.addEventListener('pointerdown', moved, true);
+    document.addEventListener('keydown', navigating, true);
+    return () => {
+      recoveryFocus.current.cancel();
+      document.removeEventListener('focusin', moved);
+      document.removeEventListener('pointerdown', moved, true);
+      document.removeEventListener('keydown', navigating, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (unavailableReason) markUnavailable.current(unavailableReason);
+  }, [unavailableReason]);
+
   useLayoutEffect(() => {
     viewportRef.current?.setVisible(visible);
     if (!visible) {
+      recoveryFocus.current.cancel();
       terminalRef.current?.blur();
       setExpanded(false);
       return;
@@ -180,6 +223,20 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
     };
   }, [focused]);
 
+  const recoverShell = async () => {
+    if (!onRecoverShell || recoveringShell || recoveryInFlight.current) return;
+    recoveryInFlight.current = true;
+    recoveryFocus.current.begin(document.activeElement);
+    const request = ++recoveryRequest.current;
+    try {
+      const recovered = await onRecoverShell();
+      if (request !== recoveryRequest.current) return;
+      if (recovered) reconnect.current();
+      else recoveryFocus.current.cancel();
+    } finally {
+      if (request === recoveryRequest.current) recoveryInFlight.current = false;
+    }
+  };
   const closeFind = () => {
     setFindOpen(false);
     searchRef.current?.clearDecorations();
@@ -219,7 +276,7 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
   return <div ref={shell} hidden={!visible} className={`terminal-shell terminal-enhanced${focused ? ' terminal-expanded' : ''}`} role={focused ? 'dialog' : undefined} aria-modal={focused || undefined} aria-labelledby={focused ? titleId : undefined} onKeyDownCapture={handleKey}>
     <div className="terminal-toolbar">
       <span id={titleId}><span className={`connection-dot ${status.phase === 'connected' ? 'on' : ''}`} />{label}{preview ? ' · Preview terminal' : ' · Persistent shell'}</span>
-      <span className="terminal-connection"><span role="status" aria-live="polite">{status.phase}</span> · <button className="text-button" onClick={() => reconnect.current()} aria-label="Reconnect terminal" title="Reconnect to the same shell. The machine and its expiration stay the same.">Reconnect</button></span>
+      <TerminalConnectionControls status={status} recovering={recoveringShell} primary={shellId === 'codex'} onReconnect={() => reconnect.current()} onRecover={onRecoverShell ? () => { void recoverShell(); } : undefined}/>
       <div className="terminal-view-controls">
         <button type="button" ref={expandButton} onClick={() => focused ? exitFocus() : setExpanded(true)} aria-expanded={focused} title={focused ? 'Exit focus mode (Escape while a toolbar control has focus)' : 'Expand terminal to focus mode'}>{focused ? 'Exit focus' : 'Focus mode'}</button>
         <button type="button" onClick={() => { setFindOpen(true); findInput.current?.focus(); }} aria-expanded={findOpen} aria-controls={searchId} title="Find in current terminal buffer (Ctrl/Cmd+F)">Find</button>
@@ -246,7 +303,7 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
       </div>
       <div className="terminal-find-info"><span role="status" aria-live="polite">{searchResultLabel(query, results)}</span><span id={scopeId}>Current browser buffer only · tmux history is not searched · Enter / Shift+Enter</span></div>
     </div>
-    <div className="terminal-help" aria-live="polite">{status.message && <span>{status.message} </span>}{status.phase === 'connected' ? preview ? 'Simulated shell connection. No commands are executed.' : shellId === 'codex' ? 'Shell connection is live. Codex may still be starting or waiting for sign-in.' : 'Persistent bash shell connected on this machine.' : 'Wait for Connected before typing. Input while disconnected is discarded.'}</div>
+    <div className="terminal-help" aria-live="polite">{recoveringShell && <span>Recovering the primary shell on this machine… </span>}{status.message && <span>{status.message} </span>}{status.phase === 'connected' ? preview ? 'Simulated shell connection. No commands are executed.' : shellId === 'codex' ? 'Shell connection is live. Codex may still be starting or waiting for sign-in.' : 'Persistent bash shell connected on this machine.' : 'Wait for Connected before typing. Input while disconnected is discarded.'}</div>
     <div ref={host} className="terminal-host" role="region" aria-label={`${label} terminal`} />
     <div className="terminal-footer"><span>{preview ? 'SIMULATION / No commands are executed' : 'tmux / Reconnect to the same shell'}</span><span>UTF-8</span></div>
   </div>;

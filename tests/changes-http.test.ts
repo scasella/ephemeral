@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from '../server/app.js';
+import { createLiveApplication } from './helpers/create-live-application.js';
 import { createChangeInspectionGate } from '../server/changes.js';
 import { readConfig } from '../server/config.js';
 import { digest, seal } from '../server/auth/crypto.js';
@@ -34,7 +35,7 @@ describe('read-only change review HTTP boundaries', () => {
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'ep-changes-http-'));
     const config = readConfig({ EPHEMERAL_MODE: 'preview', DATA_DIR: directory, PUBLIC_URL: 'http://localhost:4355', ENCRYPTION_KEY: key, ALLOWED_GITHUB_IDS: '42,99' });
-    application = await createApplication({ ...config, mode: 'live' });
+    application = await createLiveApplication({ ...config, mode: 'live' });
     preview = await createApplication(config);
     for (const app of [application, preview]) await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve));
     const url = (app: typeof application) => { const address = app.server.address(); if (!address || typeof address === 'string') throw new Error('No address'); return `http://127.0.0.1:${address.port}`; };

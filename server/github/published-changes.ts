@@ -1,5 +1,9 @@
 import type { Session } from '../contracts.js';
 import { GitHubError, safeRepository } from './security.js';
+import { OVERSIZED_PUBLISHED_PATCH, PublishedJsonLimit, PublishedJsonProjection,
+  PUBLISHED_MAX_FILES, PUBLISHED_MAX_REMOTE_FILES, PUBLISHED_MAX_METADATA_BYTES, PUBLISHED_MAX_WIRE_BYTES,
+  PUBLISHED_MAX_PATCH_BYTES, type PublishedJsonKind } from './published-json.js';
+export { PUBLISHED_MAX_FILES, PUBLISHED_MAX_METADATA_BYTES, PUBLISHED_MAX_WIRE_BYTES, PUBLISHED_MAX_PATCH_BYTES } from './published-json.js';
 
 export interface PublishedChangeFile {
   path: string;
@@ -38,9 +42,8 @@ export class PublishedChangesError extends Error {
   constructor(message: string, public status = 502, public code = 'published_review_unavailable') { super(message); }
 }
 
-export const PUBLISHED_MAX_FILES = 200;
-export const PUBLISHED_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-export const PUBLISHED_MAX_PATCH_BYTES = 65_536;
+// Compatibility name: the 2 MiB limit now applies to metadata, not discarded patches.
+export const PUBLISHED_MAX_RESPONSE_BYTES = PUBLISHED_MAX_METADATA_BYTES;
 const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 const statuses = new Set(['added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged']);
 const changed = () => new PublishedChangesError('The published head or base changed during this review. Refresh to review the current commits.', 409, 'published_review_changed');
@@ -84,14 +87,13 @@ function ref(value: unknown, branch: string): string {
 }
 
 class ReadFailure extends Error { constructor(public upstreamStatus: number) { super('GitHub read failed'); } }
-class ResponseLimit extends Error {}
 
 /** This reader never follows returned URLs and never requests file/blob contents.
  * One deadline and byte budget cover repository metadata, refs, and comparison.
  */
 function reader(token: string, signal: AbortSignal, abort: () => void) {
-  let remaining = PUBLISHED_MAX_RESPONSE_BYTES;
-  return async (path: string): Promise<unknown> => {
+  const budget = { wire: PUBLISHED_MAX_WIRE_BYTES, metadata: PUBLISHED_MAX_METADATA_BYTES };
+  return async (path: string, kind: PublishedJsonKind, selectedPath?: string): Promise<unknown> => {
     signal.throwIfAborted();
     const response = await fetch(`https://api.github.com${path}`, { method: 'GET', redirect: 'error', signal,
       headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'Ephemeral' } });
@@ -101,25 +103,41 @@ function reader(token: string, signal: AbortSignal, abort: () => void) {
       throw new ReadFailure(response.status);
     }
     const length = response.headers.get('content-length');
-    if (length !== null && /^\d+$/.test(length) && Number(length) > remaining) {
-      void response.body?.cancel().catch(() => {}); abort(); throw new ResponseLimit();
+    if (length !== null && /^\d+$/.test(length) && Number(length) > budget.wire) {
+      void response.body?.cancel().catch(() => {}); abort(); throw new PublishedJsonLimit('wire');
     }
     if (!response.body) throw new Error('Missing GitHub response');
-    const stream = response.body.getReader(), chunks: Uint8Array[] = [];
+    const stream = response.body.getReader();
     const cancel = () => { void stream.cancel().catch(() => {}); };
     signal.addEventListener('abort', cancel, { once: true });
+    const parser = new PublishedJsonProjection(kind, budget, selectedPath);
+    const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+    let sinceYield = 0;
     try {
       while (true) {
         signal.throwIfAborted();
         const next = await stream.read();
         if (next.done) break;
-        remaining -= next.value.byteLength;
-        if (remaining < 0) { cancel(); abort(); throw new ResponseLimit(); }
-        chunks.push(next.value);
+        budget.wire -= next.value.byteLength;
+        if (budget.wire < 0) throw new PublishedJsonLimit('wire');
+        // Bound decoded allocations even if a provider delivers one huge chunk.
+        for (let offset = 0; offset < next.value.byteLength; offset += 16_384) {
+          signal.throwIfAborted();
+          const bytes = next.value.subarray(offset, offset + 16_384);
+          parser.write(decoder.decode(bytes, { stream: true }));
+          sinceYield += bytes.byteLength;
+          if (sinceYield >= 262_144) {
+            await new Promise<void>(resolve => setImmediate(resolve)); sinceYield = 0;
+          }
+        }
       }
+      signal.throwIfAborted();
+      parser.write(decoder.decode());
+      return parser.finish();
+    } catch (error) {
+      // A parse failure must stop a still-open provider stream immediately too.
+      cancel(); abort(); throw error;
     } finally { signal.removeEventListener('abort', cancel); stream.releaseLock(); }
-    signal.throwIfAborted();
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))) as unknown;
   };
 }
 
@@ -128,6 +146,8 @@ function selectedPatch(path: string, files: PublishedChangeFile[], remote: Recor
   if (index < 0) return { path, state: 'unavailable', text: null, truncated: listTruncated,
     reason: listTruncated ? 'This file is outside the bounded file list. Open the commit-pinned GitHub comparison.' : 'This file is not in the published comparison.' };
   const patch = remote[index].patch;
+  if (patch === OVERSIZED_PUBLISHED_PATCH) return { path, state: 'too_large', text: null, truncated: true,
+    reason: 'The patch exceeds the 64 KiB display limit. Open the commit-pinned GitHub comparison.' };
   if (patch === undefined || patch === null || patch === '' || (typeof patch === 'string' && patch.includes('\0'))) {
     return { path, state: 'unavailable', text: null, truncated: true,
       reason: 'GitHub did not provide a displayable patch. The file may be binary or its patch may have been omitted.' };
@@ -172,12 +192,12 @@ export async function readPublishedChanges(session: Session, userToken: string, 
     // Authorization must complete before the first repository/ref/compare read.
     await checkAccess();
     const read = reader(userToken, signal, () => controller.abort());
-    const repo = record(await read(`/repos/${repository}`));
+    const repo = record(await read(`/repos/${repository}`, 'repository'));
     if (repo.id !== session.repositoryId || repo.full_name !== repository) throw new PublishedChangesError('The repository identity is no longer available to this session.', 403, 'published_review_forbidden');
     const basePath = `/repos/${repository}/git/ref/heads/${encodeURIComponent(session.baseBranch)}`;
     const headPath = `/repos/${repository}/git/ref/heads/${encodeURIComponent(session.branch)}`;
     let baseSha: string, headSha: string;
-    try { baseSha = ref(await read(basePath), session.baseBranch); }
+    try { baseSha = ref(await read(basePath, 'ref'), session.baseBranch); }
     catch (error) {
       if (error instanceof ReadFailure && error.upstreamStatus === 404) {
         if (query.expectedBaseSha) throw changed();
@@ -185,7 +205,7 @@ export async function readPublishedChanges(session: Session, userToken: string, 
       }
       throw error;
     }
-    try { headSha = ref(await read(headPath), session.branch); }
+    try { headSha = ref(await read(headPath, 'ref'), session.branch); }
     catch (error) {
       if (error instanceof ReadFailure && error.upstreamStatus === 404) {
         if (query.expectedHeadSha) throw changed();
@@ -194,11 +214,11 @@ export async function readPublishedChanges(session: Session, userToken: string, 
       throw error;
     }
     if (query.expectedHeadSha && (query.expectedHeadSha !== headSha || query.expectedBaseSha !== baseSha)) throw changed();
-    const comparison = record(await read(`/repos/${repository}/compare/${baseSha}...${headSha}?per_page=1&page=1`));
+    const comparison = record(await read(`/repos/${repository}/compare/${baseSha}...${headSha}?per_page=1&page=1`, 'comparison', query.path));
     const aheadCommits = count(comparison.ahead_by), behindCommits = count(comparison.behind_by);
     const mergeBaseSha = sha(record(comparison.merge_base_commit).sha);
     if (sha(record(comparison.base_commit).sha) !== baseSha || !['ahead', 'behind', 'identical', 'diverged'].includes(String(comparison.status)) ||
-      !Array.isArray(comparison.files) || comparison.files.length > 300) throw new Error('Invalid GitHub comparison');
+      !Array.isArray(comparison.files) || comparison.files.length > PUBLISHED_MAX_REMOTE_FILES) throw new Error('Invalid GitHub comparison');
     const expectedStatus = aheadCommits ? (behindCommits ? 'diverged' : 'ahead') : (behindCommits ? 'behind' : 'identical');
     if (comparison.status !== expectedStatus) throw new Error('Invalid GitHub comparison status');
     const paths = new Set<string>();
@@ -215,12 +235,12 @@ export async function readPublishedChanges(session: Session, userToken: string, 
     });
     const files = allFiles.slice(0, PUBLISHED_MAX_FILES);
     // GitHub supplies at most 300 files. Even exactly 300 cannot prove completeness.
-    const listTruncated = allFiles.length > PUBLISHED_MAX_FILES || allFiles.length === 300;
+    const listTruncated = allFiles.length > PUBLISHED_MAX_FILES || allFiles.length === PUBLISHED_MAX_REMOTE_FILES;
     const selected = query.path ? selectedPatch(query.path, files, remote, listTruncated) : null;
     await checkAccess();
     // Never return content observed before a ref move, including branch deletion.
     let currentBase: string, currentHead: string;
-    try { currentBase = ref(await read(basePath), session.baseBranch); currentHead = ref(await read(headPath), session.branch); }
+    try { currentBase = ref(await read(basePath, 'ref'), session.baseBranch); currentHead = ref(await read(headPath, 'ref'), session.branch); }
     catch (error) { if (error instanceof ReadFailure && error.upstreamStatus === 404) throw changed(); throw error; }
     if (currentBase !== baseSha || currentHead !== headSha) throw changed();
     const noChanges = !aheadCommits || !allFiles.length;
@@ -232,7 +252,9 @@ export async function readPublishedChanges(session: Session, userToken: string, 
   } catch (error) {
     if (error instanceof PublishedChangesError) throw error;
     if (error instanceof GitHubError && error.status === 403) throw new PublishedChangesError('Repository is no longer accessible to this account and App installation.', 403, 'published_review_forbidden');
-    if (error instanceof ResponseLimit) return { ...initial, reason: 'The GitHub comparison exceeded the 2 MiB response limit. Review the published branches on GitHub.' };
+    if (error instanceof PublishedJsonLimit) return { ...initial, reason: error.budget === 'wire' ?
+      'The GitHub comparison exceeded the 32 MiB transfer limit. Review the published branches on GitHub.' :
+      'The GitHub comparison exceeded the bounded metadata limits. Review the published branches on GitHub.' };
     return initial;
   } finally { clearTimeout(deadline); removeAbort?.(); }
 }

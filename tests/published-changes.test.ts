@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '../server/contracts.js';
 import { GitHubAPI } from '../server/github/api.js';
 import { GitHubError } from '../server/github/security.js';
-import { PUBLISHED_MAX_RESPONSE_BYTES, validatePublishedChangesQuery } from '../server/github/published-changes.js';
+import { PUBLISHED_MAX_WIRE_BYTES, validatePublishedChangesQuery } from '../server/github/published-changes.js';
 
 const baseSha = 'a'.repeat(40), headSha = 'b'.repeat(40), mergeSha = 'c'.repeat(40), movedSha = 'd'.repeat(40);
 const session = (): Session => ({ id: 'session', userId: '42', repository: 'owner/repo', repositoryId: 1, installationId: 2,
@@ -181,20 +181,85 @@ describe('published GitHub comparison', () => {
     const exact = fixture({ comparison: comparison({ files: [file({ patch: '+'.padEnd(65_536, 'x'), deletions: 0, changes: 1 })] }) });
     expect((await exact.api.publishedChanges(exact.s, 'oauth', { ...pair, path: 'src/main.ts' })).selected?.text).toHaveLength(65_536);
   });
+  it('verifies patch-heavy comparisons above 2MiB while retaining only the selected normal patch', async () => {
+    const body = comparison({ files: [file({ patch: '界'.repeat(900_000), filename: 'other' }), file()] });
+    expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(2 * 1024 * 1024);
+    const f = fixture({ comparison: body });
+    const result = await f.api.publishedChanges(f.s, 'oauth', { ...pair, path: 'src/main.ts' });
+    expect(result).toMatchObject({ state: 'known', headSha, baseSha, aheadCommits: 1,
+      selected: { state: 'patch', text: '@@ -1 +1 @@\n-old\n+new', truncated: false } });
+    expect(result.files).toHaveLength(2);
+    expect(JSON.stringify(result).length).toBeLessThan(2_000);
+    expect(f.repositories).toHaveBeenCalledTimes(2); expect(f.fetcher).toHaveBeenCalledTimes(6);
+    expect(f.installationToken).not.toHaveBeenCalled();
+    expect(await f.api.publishedChanges(f.s, 'oauth')).toMatchObject({ state: 'known', selected: null });
+  });
+  it('keeps trustworthy comparison metadata when the requested patch itself exceeds 2MiB', async () => {
+    const f = fixture({ comparison: comparison({ files: [file({ patch: '+'.padEnd(3 * 1024 * 1024, 'x') })] }) });
+    expect(await f.api.publishedChanges(f.s, 'oauth', { ...pair, path: 'src/main.ts' })).toMatchObject({
+      state: 'known', headSha, baseSha, aheadCommits: 1, selected: { state: 'too_large', text: null, truncated: true } });
+    expect(f.installationToken).not.toHaveBeenCalled();
+  });
+  it('decodes fragmented UTF8 bytes and escaped keys without confusing the exact selected path', async () => {
+    const filename = 'src/日本語😀.ts';
+    const bytes = new TextEncoder().encode(JSON.stringify(comparison({ files: [file({ filename, patch: '-old\n+😀' })] }))
+      .replace('"filename"', '"file\\u006eame"').replace('"patch"', '"pa\\u0074ch"'));
+    const f = fixture({ compareResponse: () => new Response(new ReadableStream({
+      start(controller) { for (const byte of bytes) controller.enqueue(new Uint8Array([byte])); controller.close(); },
+    })) });
+    expect(await f.api.publishedChanges(f.s, 'oauth', { ...pair, path: filename })).toMatchObject({
+      state: 'known', selected: { path: filename, state: 'patch', text: '-old\n+😀', truncated: false } });
+  });
+  it.each([
+    JSON.stringify(comparison({ ignored: 'x'.repeat(65_537) })),
+    JSON.stringify(comparison({ ignored: Array(33).fill('x'.repeat(65_536)) })),
+    JSON.stringify(comparison()).replace('"ahead_by":1', '"ahead_by":1,"ahead_\\u0062y":1'),
+    JSON.stringify(comparison()).slice(0, -1),
+    JSON.stringify(comparison()).replace('"patch":"', '"patch":"\\ud800'),
+    JSON.stringify(comparison()).replace('"patch":"', '"patch":"\\q'),
+    JSON.stringify(comparison()).replace('"patch":"', '"patch":"\u0001'),
+    JSON.stringify(comparison({ ignored: null })).replace('"ignored":null', '"ignored":' + '['.repeat(40) + '0' + ']'.repeat(40)),
+  ])('never returns known metadata from malformed or excessive JSON (%#)', async text => {
+    const f = fixture({ compareResponse: () => new Response(text) });
+    expect(await f.api.publishedChanges(f.s, 'oauth', { ...pair, path: 'src/main.ts' })).toMatchObject({
+      state: 'unknown', files: [], selected: null, headSha: null, baseSha: null, comparisonUrl: null });
+    expect(f.fetcher).toHaveBeenCalledTimes(4);
+  });
+  it('cancels a still-open provider stream immediately after a parser rejection', async () => {
+    const cancel = vi.fn();
+    const f = fixture({ compareResponse: () => new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode('{"files":[],"files":')); }, cancel,
+    })) });
+    expect(await f.api.publishedChanges(f.s, 'oauth')).toMatchObject({ state: 'unknown', files: [] });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect((f.fetcher.mock.calls[3][1]?.signal as AbortSignal).aborted).toBe(true);
+  });
+  it('cancels an active comparison stream when its caller aborts', async () => {
+    const controller = new AbortController(), cancel = vi.fn();
+    let reading!: () => void;
+    const started = new Promise<void>(resolve => { reading = resolve; });
+    const f = fixture({ compareResponse: () => new Response(new ReadableStream({
+      pull() { reading(); }, cancel,
+    })) });
+    const pending = f.api.publishedChanges(f.s, 'oauth', {}, controller.signal);
+    await started; controller.abort();
+    expect(await pending).toMatchObject({ state: 'unknown', files: [], selected: null });
+    expect(cancel).toHaveBeenCalledTimes(1); expect(f.fetcher).toHaveBeenCalledTimes(4);
+  });
   it('bounds streaming bytes without Content-Length and cancels oversized content before parsing', async () => {
     const cancelled = vi.fn();
     const f = fixture({ compareResponse: () => new Response(new ReadableStream({
-      start(stream) { stream.enqueue(new Uint8Array(PUBLISHED_MAX_RESPONSE_BYTES + 1)); }, cancel: cancelled,
+      start(stream) { stream.enqueue(new Uint8Array(PUBLISHED_MAX_WIRE_BYTES + 1)); }, cancel: cancelled,
     })) });
     const result = await f.api.publishedChanges(f.s, 'oauth');
     expect(result).toMatchObject({ state: 'unknown', files: [], selected: null, headSha: null });
-    expect(result.reason).toContain('2 MiB'); expect(cancelled).toHaveBeenCalled();
+    expect(result.reason).toContain('32 MiB'); expect(cancelled).toHaveBeenCalled();
     expect(f.fetcher).toHaveBeenCalledTimes(4);
     expect((f.fetcher.mock.calls[3][1]?.signal as AbortSignal).aborted).toBe(true);
   });
   it('rejects an oversized advertised length without buffering and hides upstream bodies', async () => {
     const cancel = vi.fn();
-    const f = fixture({ compareResponse: () => new Response(new ReadableStream({ cancel }), { headers: { 'content-length': String(PUBLISHED_MAX_RESPONSE_BYTES + 1) } }) });
+    const f = fixture({ compareResponse: () => new Response(new ReadableStream({ cancel }), { headers: { 'content-length': String(PUBLISHED_MAX_WIRE_BYTES + 1) } }) });
     expect(await f.api.publishedChanges(f.s, 'oauth')).toMatchObject({ state: 'unknown', files: [] }); expect(cancel).toHaveBeenCalled();
     const failed = fixture({ compareResponse: () => json({ secret: 'Bearer OAuth-private-body' }, 500) });
     expect(JSON.stringify(await failed.api.publishedChanges(failed.s, 'oauth'))).not.toContain('OAuth-private-body');

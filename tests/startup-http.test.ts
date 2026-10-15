@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { createApplication } from '../server/app.js';
+import { createLiveApplication } from './helpers/create-live-application.js';
 import { readConfig } from '../server/config.js';
 import { digest, seal } from '../server/auth/crypto.js';
 import { createStartupRepository, type StartupProgress } from '../server/startup.js';
@@ -39,7 +40,7 @@ describe('startup HTTP and terminal boundary', () => {
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'ep-startup-http-'));
     const config = readConfig({ EPHEMERAL_MODE: 'preview', DATA_DIR: directory, PUBLIC_URL: publicUrl, ENCRYPTION_KEY: testKey, ALLOWED_GITHUB_IDS: '42,99' });
-    live = await createApplication({ ...config, mode: 'live' }); liveOrigin = await listen(live);
+    live = await createLiveApplication({ ...config, mode: 'live' }); liveOrigin = await listen(live);
     preview = await createApplication(config); previewOrigin = await listen(preview);
     await live.db.query('INSERT INTO browser_sessions(hash,user_id,login,avatar_url,credential,expires_at) VALUES($1,$2,$3,$4,$5,$6)',
       [digest('owner-browser'), '42', 'owner', '', seal('test-credential', testKey), new Date(Date.now() + 3600_000).toISOString()]);

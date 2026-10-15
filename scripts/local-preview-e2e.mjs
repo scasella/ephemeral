@@ -15,7 +15,7 @@ const control = await mkdtemp(join(tmpdir(), 'ephemeral-preview-controller-'));
 const child = spawn(process.execPath, [join(root, 'node_modules/vitest/vitest.mjs'), 'run', '--config', 'scripts/fixtures/local-preview-vitest.config.ts', 'tests/local-preview-e2e.test.ts'], {
   cwd: root,
   detached: true,
-  env: { PATH: process.env.PATH, LANG: 'C', NODE_ENV: 'test',
+  env: { PATH: process.env.PATH, LANG: 'C', NODE_ENV: 'test', EPHEMERAL_SKIP_DOTENV: '1',
     EPHEMERAL_LOCAL_PREVIEW_BROWSER: args[0] === '--browser' ? '1' : '0', EPHEMERAL_LOCAL_PREVIEW_CONTROL_DIR: control },
   stdio: 'inherit',
 });

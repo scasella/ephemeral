@@ -5,18 +5,24 @@ import { CredentialStore } from './store.js';
 import { encryptionKey, GitHubError } from './security.js';
 import type { PullRequestRepository } from './pull-requests.js';
 import type { PublishedChangesQuery } from './published-changes.js';
+import { beforeDeadline, SHUTDOWN_TIMEOUT_MS } from '../shutdown.js';
 export type { Repo } from './api.js';
 export interface GitHubOptions extends GateOptions {
   db: Database; appId: string; privateKey: string; encryptionKey: string; appSlug: string; publicUrl: string;
   pullRequests: PullRequestRepository;
+  registerClose?(close: () => Promise<void>): void;
 }
 export async function createGitHubServices(options: GitHubOptions) {
   const api = new GitHubAPI(options.appId, options.privateKey.replaceAll('\\n', '\n'), options.appSlug);
   const store = new CredentialStore(options.db, encryptionKey(options.encryptionKey), api);
   await store.migrate();
   const gateway = new GitGateway(store, options);
-  await gateway.start();
-  await store.retryRotated();
+  options.registerClose?.(() => gateway.close());
+  try { await gateway.start(); await store.retryRotated(); }
+  catch (error) {
+    if (!options.registerClose) await beforeDeadline(gateway.close(), SHUTDOWN_TIMEOUT_MS);
+    throw error;
+  }
   const credentials: GatewayCredentials = {
     issue: session => gateway.serialize(session.id, () => store.issue(session)),
     disable: id => gateway.disable(id),
@@ -54,6 +60,9 @@ export async function createGitHubServices(options: GitHubOptions) {
       await gateway.authorize(session.id, true);
       // External pushes can move either ref while the matching-PR lookup is in flight.
       await verify();
+      // A stop or deadline can arrive during the final remote verification.
+      // Re-read only local authority so another upstream wait cannot stale it.
+      if (!existing) await gateway.authorizeLocal(session.id, true);
       const result = existing ?? await api.pullRequest(current, token, title, body);
       await options.pullRequests.save(current.id, result);
       return result;

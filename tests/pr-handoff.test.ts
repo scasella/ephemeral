@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Database, Session } from '../server/contracts.js';
 import { GitHubAPI } from '../server/github/api.js';
-import { GitHubError } from '../server/github/security.js';
 import { createPullRequestRepository, type SavedPullRequest } from '../server/github/pull-requests.js';
 import { createGitHubServices } from '../server/github/index.js';
 
@@ -14,6 +13,7 @@ vi.mock('../server/github/gateway.js', () => ({ GitGateway: class {
   router = {}; constructor(_store: unknown, private options: { getSession(id: string): Promise<Session> }) {}
   async start() {} async close() {} async serialize<T>(_id: string, action: () => Promise<T>) { return action(); }
   async authorize(id: string) { return this.options.getSession(id); }
+  async authorizeLocal(id: string) { return this.options.getSession(id); }
 } }));
 const head = 'a'.repeat(40), base = 'b'.repeat(40);
 const session: Session = { id: 'test', userId: 'owner', repository: 'owner/repo', repositoryId: 1, installationId: 2,
@@ -21,32 +21,45 @@ const session: Session = { id: 'test', userId: 'owner', repository: 'owner/repo'
   cleanup: { vm: 'pending', github: 'pending', gateway: 'pending', codex: 'pending' }, codexRemoteRevocation: 'unverified' };
 const pr: SavedPullRequest = { url: 'https://github.com/owner/repo/pull/7', number: 7, headSha: head, baseSha: base, headBranch: session.branch, baseBranch: 'main', createdAt: '2026-10-14T12:00:00.000Z' };
 const remotePr = { html_url: pr.url, number: pr.number, created_at: pr.createdAt, head: { sha: head, ref: session.branch, repo: { id: 1 } }, base: { sha: base, ref: 'main', repo: { id: 1 } } };
-afterEach(() => vi.restoreAllMocks());
-function ready(api: GitHubAPI, ahead = 1, files: unknown[] = [{}]) {
-  return vi.spyOn(api, 'request').mockResolvedValueOnce({ object: { sha: base, type: 'commit' } }).mockResolvedValueOnce({ object: { sha: head, type: 'commit' } }).mockResolvedValueOnce({ ahead_by: ahead, base_commit: { sha: base }, files });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+const changedFile = { filename: 'src/main.ts', status: 'modified', additions: 1, deletions: 1, changes: 2 };
+function ready(ahead = 1, files: unknown[] = [changedFile], options: { missing?: 'base' | 'head'; malformedBase?: boolean; comparisonBase?: string } = {}) {
+  const fetcher = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
+    const path = new URL(String(url)).pathname;
+    const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+    if (path === '/repos/owner/repo') return json({ id: 1, full_name: 'owner/repo' });
+    if (path === '/repos/owner/repo/git/ref/heads/main') return json({ ref: 'refs/heads/main', object: { sha: options.malformedBase ? 'bad' : base, type: 'commit' } }, options.missing === 'base' ? 404 : 200);
+    if (path === '/repos/owner/repo/git/ref/heads/ephemeral%2Ftest') return json({ ref: `refs/heads/${session.branch}`, object: { sha: head, type: 'commit' } }, options.missing === 'head' ? 404 : 200);
+    if (path.startsWith('/repos/owner/repo/compare/')) return json({ status: ahead ? 'ahead' : 'identical', ahead_by: ahead, behind_by: 0,
+      base_commit: { sha: options.comparisonBase ?? base }, merge_base_commit: { sha: base }, files });
+    throw new Error(`Unexpected GitHub path: ${path}`);
+  });
+  vi.stubGlobal('fetch', fetcher); return fetcher;
 }
 describe('remote PR preflight', () => {
   it('verifies exact remote head and base with read-only requests', async () => {
-    const api = new GitHubAPI('42', 'unused', 'app'), request = ready(api);
+    const api = new GitHubAPI('42', 'unused', 'app'), request = ready();
     expect(await api.pullRequestPreview(session, 'token')).toMatchObject({ state: 'ready', headSha: head, baseSha: base, aheadCommits: 1 });
-    expect(request.mock.calls.every(call => !call[2] || call[2] === 'GET')).toBe(true);
-    expect(request.mock.calls[1][0]).toContain('/git/ref/heads/ephemeral%2Ftest');
-    expect(request.mock.calls[2][0]).toContain(`/compare/${base}...${head}`);
+    expect(request.mock.calls.every(call => call[1]?.method === 'GET')).toBe(true);
+    expect(request.mock.calls[2][0]).toContain('/git/ref/heads/ephemeral%2Ftest');
+    expect(request.mock.calls[3][0]).toContain(`/compare/${base}...${head}`);
   });
   it('blocks an unpublished head and zero changes', async () => {
     const api = new GitHubAPI('42', 'unused', 'app');
-    vi.spyOn(api, 'request').mockResolvedValueOnce({ object: { sha: base, type: 'commit' } }).mockRejectedValueOnce(new GitHubError('missing', 502, 404));
+    ready(1, [changedFile], { missing: 'head' });
     expect(await api.pullRequestPreview(session, 'token')).toMatchObject({ state: 'unpublished', headSha: null });
-    vi.restoreAllMocks(); ready(api, 0, []);
+    ready(0, []);
     expect(await api.pullRequestPreview(session, 'token')).toMatchObject({ state: 'no_changes', aheadCommits: 0 });
   });
   it('treats empty commit diffs, missing base, malformed data, and failures honestly', async () => {
-    const api = new GitHubAPI('42', 'unused', 'app'); ready(api, 1, []);
+    const api = new GitHubAPI('42', 'unused', 'app'); ready(1, []);
     expect((await api.pullRequestPreview(session, 'token')).state).toBe('no_changes');
-    vi.restoreAllMocks(); vi.spyOn(api, 'request').mockRejectedValue(new Error('Bearer private-token upstream body'));
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Bearer private-token upstream body')));
     const unknown = await api.pullRequestPreview(session, 'token');
     expect(unknown.state).toBe('unknown'); expect(JSON.stringify(unknown)).not.toContain('private-token');
-    vi.restoreAllMocks(); vi.spyOn(api, 'request').mockResolvedValue({ object: { sha: 'bad', type: 'commit' } });
+    ready(1, [changedFile], { missing: 'base' });
+    expect((await api.pullRequestPreview(session, 'token')).state).toBe('unavailable');
+    ready(1, [changedFile], { malformedBase: true });
     expect((await api.pullRequestPreview(session, 'token')).state).toBe('unknown');
   });
   it('retains actual GitHub metadata and rejects foreign URLs or branch identity', async () => {
@@ -63,7 +76,7 @@ describe('remote PR preflight', () => {
     expect(await api.existingPullRequest(session, 'token')).toEqual(pr);
     expect(request.mock.calls[0][0]).toContain('state=open');
     vi.restoreAllMocks();
-    vi.spyOn(api, 'request').mockResolvedValueOnce({ object: { sha: base, type: 'commit' } }).mockResolvedValueOnce({ object: { sha: head, type: 'commit' } }).mockResolvedValueOnce({ ahead_by: 1, base_commit: { sha: head }, files: [{}] });
+    ready(1, [changedFile], { comparisonBase: head });
     expect((await api.pullRequestPreview(session, 'token')).state).toBe('unknown');
   });
 });
@@ -72,6 +85,7 @@ describe('creation preflight and retry recovery', () => {
     const db = new PGlite(); const records = await createPullRequestRepository(db as unknown as Database);
     const github = await createGitHubServices({ db: db as unknown as Database, pullRequests: records, appId: '42', privateKey: 'unused', encryptionKey: Buffer.alloc(32).toString('base64'), appSlug: 'app', publicUrl: 'http://localhost', getSession: async () => session });
     await github.credentials.issue(session);
+    vi.spyOn(GitHubAPI.prototype, 'prepareInstallationToken').mockImplementation(function (this: GitHubAPI, s) { return () => this.installationToken(s); });
     vi.spyOn(GitHubAPI.prototype, 'installationToken').mockResolvedValue({ token: 'test-token', expires_at: new Date(Date.now() + 3600000).toISOString() });
     return { db, records, github };
   }

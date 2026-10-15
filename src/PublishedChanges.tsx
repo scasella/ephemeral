@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef } from 'react';
 import type { Session } from './api';
 import { emptyPublishedView, publishedComparisonUrl, PublishedChangesLoader, publishedReviewReady, reducePublished, requestPublishedChanges, type PublishedViewState } from './published-changes';
 import './published-changes.css';
+import { ReviewText } from './review-text';
 
 export function usePublishedComparison(session: Session, preview: boolean, accountKey: string) {
   const [state, dispatch] = useReducer(reducePublished, emptyPublishedView);
@@ -48,8 +49,8 @@ export function PublishedComparisonPreview({ state, now, unavailable, onSelect }
         <details className="published-provenance" open={prior}>
         <summary>Exact commits and comparison details · {value.aheadCommits ?? 'Unconfirmed'} ahead · {value.behindCommits ?? 'Unconfirmed'} behind</summary>
         <dl className="published-facts">
-          <div><dt>Repository</dt><dd>{value.repository}</dd></div>
-          <div><dt>Work branch</dt><dd>{value.headBranch}</dd></div><div><dt>PR base</dt><dd>{value.baseBranch}</dd></div>
+          <div><dt>Repository</dt><dd><ReviewText text={value.repository} mode="identity"/></dd></div>
+          <div><dt>Work branch</dt><dd><ReviewText text={value.headBranch} mode="identity"/></dd></div><div><dt>PR base</dt><dd><ReviewText text={value.baseBranch} mode="identity"/></dd></div>
           <div><dt>Pushed head commit</dt><dd><code>{value.headSha || 'Unconfirmed'}</code></dd></div>
           <div><dt>Base commit</dt><dd><code>{value.baseSha || 'Unconfirmed'}</code></dd></div>
           <div><dt>Merge base</dt><dd><code>{value.mergeBaseSha || 'Unconfirmed'}</code></dd></div>
@@ -64,12 +65,12 @@ export function PublishedComparisonPreview({ state, now, unavailable, onSelect }
     {value && <div className="published-layout">
       <div className="published-files"><h4>Published files <span>{value.files.length}{value.listTruncated ? '+' : ''}</span></h4>
         {value.files.length ? <ul aria-label={prior ? 'Previously observed published files' : 'Published files'}>{value.files.map(file => <li key={file.path}><button type="button" disabled={unavailable || state.loading || prior} aria-pressed={state.selectedPath === file.path} onClick={() => onSelect(file.path)}>
-          <span className="published-path">{file.path}</span><span className="published-metadata">{file.status} · +{file.additions} −{file.deletions} · {file.changes} changes</span>{file.previousPath && <span className="published-metadata">From: {file.previousPath}</span>}
+          <span className="published-path"><ReviewText text={file.path} mode="identity"/></span><span className="published-metadata">{file.status} · +{file.additions} −{file.deletions} · {file.changes} changes</span>{file.previousPath && <span className="published-metadata">From: <ReviewText text={file.previousPath} mode="identity"/></span>}
         </button></li>)}</ul> : <p className="published-empty">{prior ? 'The prior comparison listed no files. Current contribution is unconfirmed.' : 'No published file changes were found at this check.'}</p>}
         {value.listTruncated && <p className="published-warning">Partial review: the file list is truncated at 200 files. Additional published files may exist. Use the exact commit comparison on GitHub for the remaining review.</p>}
       </div>
-      <div className="published-detail"><h4>{state.selectedPath ? <span className="published-path">{state.selectedPath}</span> : 'Published patch'}</h4>
-        {state.loading || prior ? <p className="published-empty">The patch is hidden until the current comparison is confirmed. {state.loading ? 'Wait for the check to finish.' : 'Refresh review to continue.'}</p> : !value.files.length ? <p className="published-empty">No published patch to review at this check.</p> : !state.selectedPath ? <p className="published-empty">Select a published file to review its patch before handing off the work.</p> : selected?.state === 'patch' ? <><pre className="published-patch" tabIndex={0} aria-label="Published file patch"><code>{selected.text || 'No patch text was returned for this file.'}</code></pre>{selected.truncated && <p className="published-warning">Partial review: GitHub returned a partial patch. {selected.reason} Use the exact commit comparison on GitHub to review the remaining changes.</p>}</> : <p className="published-empty">{selected?.state === 'too_large' ? 'Partial review: this patch exceeds the 64 KiB preview limit.' : 'Partial review: no patch is available for this file.'} {selected?.reason || 'GitHub did not provide a text patch; this does not establish that the file is binary.'} Use the exact commit comparison on GitHub to review it.</p>}
+      <div className="published-detail"><h4>{state.selectedPath ? <span className="published-path"><ReviewText text={state.selectedPath} mode="identity"/></span> : 'Published patch'}</h4>
+        {state.loading || prior ? <p className="published-empty">The patch is hidden until the current comparison is confirmed. {state.loading ? 'Wait for the check to finish.' : 'Refresh review to continue.'}</p> : !value.files.length ? <p className="published-empty">No published patch to review at this check.</p> : !state.selectedPath ? <p className="published-empty">Select a published file to review its patch before handing off the work.</p> : selected?.state === 'patch' ? <><pre className="published-patch" tabIndex={0} aria-label="Published file patch"><code><ReviewText text={selected.text || 'No patch text was returned for this file.'}/></code></pre>{selected.truncated && <p className="published-warning">Partial review: GitHub returned a partial patch. {selected.reason} Use the exact commit comparison on GitHub to review the remaining changes.</p>}</> : <p className="published-empty">{selected?.state === 'too_large' ? 'Partial review: this patch exceeds the 64 KiB preview limit.' : 'Partial review: no patch is available for this file.'} {selected?.reason || 'GitHub did not provide a text patch; this does not establish that the file is binary.'} Use the exact commit comparison on GitHub to review it.</p>}
       </div>
     </div>}
   </div>;

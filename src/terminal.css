@@ -1,7 +1,7 @@
 .terminal-enhanced[hidden], .terminal-find[hidden] { display: none; }
 .terminal-enhanced .terminal-toolbar { justify-content: flex-start; gap: 8px 14px; flex-wrap: wrap; padding: 8px 12px; font-size: 11px; }
 .terminal-enhanced .terminal-toolbar > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.terminal-enhanced .terminal-connection { display: inline-flex; align-items: center; gap: 6px; }
+.terminal-enhanced .terminal-connection { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; max-width: 100%; }
 .terminal-enhanced .terminal-connection .text-button { font-size: 11px; }
 .terminal-font-controls, .terminal-view-controls { display: flex; align-items: center; gap: 6px; }
 .terminal-font-controls > span { min-width: 38px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }

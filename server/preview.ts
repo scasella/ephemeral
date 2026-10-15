@@ -25,6 +25,10 @@ export class PreviewProvider implements SandboxProvider {
     this.shells.add(key);
     return 'open';
   }
+  async recoverPrimaryShell(session: Session): Promise<TerminalShellState> {
+    this.shellKey(session, 'codex');
+    return 'open';
+  }
   async inspectShell(session: Session, shellId: string): Promise<TerminalShellState> {
     const key = this.shellKey(session, shellId);
     return shellId === 'codex' || this.shells.has(key) ? 'open' : 'closed';

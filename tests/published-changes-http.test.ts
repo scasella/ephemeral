@@ -4,9 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from '../server/app.js';
+import { createLiveApplication } from './helpers/create-live-application.js';
 import { readConfig } from '../server/config.js';
 import { digest, seal } from '../server/auth/crypto.js';
 import type { Session } from '../server/contracts.js';
+import { GitHubAPI } from '../server/github/api.js';
 import { PublishedChangesError, type PublishedChanges } from '../server/github/published-changes.js';
 
 const stubs = vi.hoisted(() => ({ authorize: vi.fn(), inspect: vi.fn(), create: vi.fn(), issue: vi.fn(), disable: vi.fn(), revoke: vi.fn(), vm: vi.fn() }));
@@ -37,7 +39,7 @@ describe('read-only published review HTTP boundaries', () => {
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'ep-changes-http-'));
     const config = readConfig({ EPHEMERAL_MODE: 'preview', DATA_DIR: directory, PUBLIC_URL: 'http://localhost:4355', ENCRYPTION_KEY: key, ALLOWED_GITHUB_IDS: '42,99' });
-    application = await createApplication({ ...config, mode: 'live' });
+    application = await createLiveApplication({ ...config, mode: 'live' });
     preview = await createApplication(config);
     for (const app of [application, preview]) await new Promise<void>(resolve => app.server.listen(0, '127.0.0.1', resolve));
     const url = (app: typeof application) => { const address = app.server.address(); if (!address || typeof address === 'string') throw new Error('No address'); return `http://127.0.0.1:${address.port}`; };
@@ -93,6 +95,36 @@ describe('read-only published review HTTP boundaries', () => {
     expect(stubs.authorize).not.toHaveBeenCalled(); expect(stubs.vm).not.toHaveBeenCalled();
     expect(stubs.issue).not.toHaveBeenCalled(); expect(stubs.disable).not.toHaveBeenCalled(); expect(stubs.revoke).not.toHaveBeenCalled();
     expect(await application.repo.get(s.id)).toEqual(s);
+  });
+  it('serves a known large comparison after stop without VM or installation credentials', async () => {
+    const s = await saved({ state: 'ended', sandboxId: null });
+    const api = new GitHubAPI('42', 'unused', 'app');
+    const repositories = vi.spyOn(api, 'repositories').mockResolvedValue([{ id: 1, installationId: 2, fullName: 'owner/repo', defaultBranch: 'main' }]);
+    const installation = vi.spyOn(api, 'prepareInstallationToken');
+    const actualFetch = globalThis.fetch;
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const parsed = new URL(String(url));
+      if (parsed.origin !== 'https://api.github.com') return actualFetch(url, init);
+      const json = (body: unknown) => new Response(JSON.stringify(body));
+      if (parsed.pathname === '/repos/owner/repo') return json({ id: 1, full_name: 'owner/repo' });
+      if (parsed.pathname === '/repos/owner/repo/git/ref/heads/main') return json({ ref: 'refs/heads/main', object: { type: 'commit', sha: base } });
+      if (parsed.pathname === `/repos/owner/repo/git/ref/heads/${encodeURIComponent(s.branch)}`) return json({ ref: `refs/heads/${s.branch}`, object: { type: 'commit', sha: head } });
+      if (parsed.pathname.startsWith('/repos/owner/repo/compare/')) return json({ status: 'ahead', ahead_by: 1, behind_by: 0,
+        base_commit: { sha: base }, merge_base_commit: { sha: base }, files: [{ filename: 'large.txt', status: 'added',
+          additions: 1, deletions: 0, changes: 1, patch: 'x'.repeat(3 * 1024 * 1024) }] });
+      throw new Error('Unexpected GitHub endpoint');
+    });
+    stubs.inspect.mockImplementation((current, token, query, signal) => api.publishedChanges(current, token, query, signal));
+    try {
+      const response = await request(s.id, `?${pair}&path=large.txt`);
+      expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toBe('no-store');
+      const body = await response.text(); expect(Buffer.byteLength(body)).toBeLessThan(10_000);
+      expect(JSON.parse(body)).toMatchObject({ state: 'known', headSha: head, baseSha: base, aheadCommits: 1,
+        files: [{ path: 'large.txt' }], selected: { state: 'too_large', text: null, truncated: true } });
+      expect(stubs.vm).not.toHaveBeenCalled(); expect(stubs.issue).not.toHaveBeenCalled();
+      expect(stubs.authorize).not.toHaveBeenCalled(); expect(installation).not.toHaveBeenCalled();
+      expect(await application.repo.get(s.id)).toEqual(s);
+    } finally { fetcher.mockRestore(); repositories.mockRestore(); installation.mockRestore(); }
   });
   it('returns the complete unavailable contract in preview without a GitHub read', async () => {
     const s = await saved({ userId: 'preview-user', state: 'ended', sandboxId: null }, preview);

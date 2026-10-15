@@ -3,6 +3,13 @@ import { createCipheriv, createDecipheriv, createHash, createPrivateKey, randomB
 export class GitHubError extends Error {
   constructor(message: string, public status = 502, public upstreamStatus?: number) { super(message); }
 }
+/** HTTP rejection observed by our transport, rather than inferred from error text. */
+export class GitHubRequestRejectedError extends GitHubError {}
+export class InstallationTokenIssuanceError extends GitHubError {
+  constructor(readonly outcome: 'not_issued' | 'unknown') {
+    super(outcome === 'not_issued' ? 'GitHub rejected token issuance' : 'GitHub token issuance is uncertain');
+  }
+}
 export function encryptionKey(value: string): Buffer {
   const key = /^[a-f0-9]{64}$/i.test(value) ? Buffer.from(value, 'hex') : Buffer.from(value, 'base64');
   if (key.length !== 32) throw new Error('TOKEN_ENCRYPTION_KEY must encode 32 bytes (hex or base64)');

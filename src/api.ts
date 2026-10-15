@@ -1,5 +1,5 @@
-import type { Session, SessionEvent } from '../server/contracts';
-export type { Session, SessionEvent };
+import type { Session, SessionEvent, SessionEventPage } from '../server/contracts';
+export type { Session, SessionEvent, SessionEventPage };
 export interface Bootstrap { user: { id: string; login: string; avatarUrl: string } | null; mode: 'live' | 'preview'; configured: boolean; sessionMaxHours: number; missing: string[]; githubInstallUrl: string | null }
 export interface Repository { id: number; fullName: string; defaultBranch: string; installationId: number }
 export async function api<T>(path: string, body?: unknown, options?: { signal?: AbortSignal }): Promise<T> {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session } from './api';
-import { requestSetup, setupDraft, setupDraftMatches, setupRunActive, setupRunBlocked, setupRunSummary, SetupLoader, validateSetupDraft, type SetupAction, type SetupDraft, type SetupState } from './repository-setup';
+import { requestSetup, setupOutputNotice, setupDraft, setupDraftMatches, setupRunActive, setupRunBlocked, setupRunGuidance, setupRunSummary, SetupLoader, validateSetupDraft, type SetupAction, type SetupDraft, type SetupState } from './repository-setup';
 
 export function RepositorySetup({ session, preview, now }: { session: Session; preview: boolean; now: number }) {
   const [state, setState] = useState<SetupState | null>(null);
@@ -21,7 +21,7 @@ export function RepositorySetup({ session, preview, now }: { session: Session; p
         if (action.type === 'save' || !edited.current) { edited.current = false; setDraft(setupDraft(value.recipe)); }
         if (action.type === 'save') setMessage('Recipe saved. Run it explicitly when you are ready.');
         if (action.type === 'run') setMessage(value.mode === 'preview' ? 'Simulation requested. No command executes in preview.' : 'Run requested. Read the result below.');
-        if (action.type === 'cancel') setMessage('Cancellation requested. Read the confirmed status below.');
+        if (action.type === 'cancel') setMessage('Cancellation requested. The recorded status below confirms the outcome.');
       }, setBusy, message => { setError(message); setMessage(''); },
     );
     loader.current = current; edited.current = false;
@@ -34,6 +34,9 @@ export function RepositorySetup({ session, preview, now }: { session: Session; p
   const recipe = state?.recipe ?? null;
   const run = state?.run ?? null;
   const running = setupRunActive(run);
+  const cancellationPending = busy === 'cancel';
+  const guidance = run ? setupRunGuidance(run) : null;
+  const outputNotice = run ? setupOutputNotice(run) : null;
   const blocked = setupRunBlocked(run, now);
   const editable = session.state === 'running' && Date.parse(session.expiresAt) > now;
   const matches = setupDraftMatches(draft, recipe);
@@ -63,13 +66,13 @@ export function RepositorySetup({ session, preview, now }: { session: Session; p
     {error && <p className="setup-error" role="alert">{error} Use Check saved setup to confirm the current recipe and run before another action.</p>}
     {message && <p className="workflow-message" role="status">{message}</p>}
     {run && <div className="setup-run" aria-label="Latest setup run">
-      <div className="setup-run-heading"><div><span className="eyebrow">{simulation ? 'LATEST SIMULATED RUN' : 'LATEST RUN'}</span><h4>{run.recipe.label}</h4><p role="status">{simulation ? 'Simulated: ' : ''}{setupRunSummary(run)}</p></div>{running && <button className="button subtle small" disabled={!editable || disabled} onClick={() => void loader.current?.run({ type: 'cancel', runId: run.id })}>{busy === 'cancel' ? 'Requesting cancellation…' : 'Cancel run'}</button>}</div>
-      <p className="workflow-message">{run.startedAt ? `Started ${new Date(run.startedAt).toLocaleString()}. ` : 'Not started. '}{run.finishedAt ? `Finished ${new Date(run.finishedAt).toLocaleString()}. ` : ''}Timeout: {run.recipe.timeoutSeconds}s.</p>
+      <div className="setup-run-heading"><div><span className="eyebrow">{simulation ? 'LATEST SIMULATED RUN' : 'LATEST RUN'}</span><h4>{run.recipe.label}</h4><p role="status">{simulation ? 'Simulated: ' : ''}{setupRunSummary(run)}</p></div>{(running || cancellationPending) && <button className="button subtle small" aria-disabled={!editable || disabled} aria-busy={cancellationPending} onClick={() => { if (!editable || disabled) return; setMessage('Requesting cancellation. Waiting for the recorded outcome…'); void loader.current?.run({ type: 'cancel', runId: run.id }); }}>{cancellationPending ? 'Requesting cancellation…' : 'Cancel run'}</button>}</div>
+      <p className="workflow-message">{run.invocationStarted === false ? (running ? 'Waiting to start. ' : 'Execution did not start. ') : run.startedAt ? `Started ${new Date(run.startedAt).toLocaleString()}. ` : running ? 'Waiting to start. ' : 'Start time not recorded. '}{run.finishedAt ? `Finished ${new Date(run.finishedAt).toLocaleString()}. ` : ''}Timeout: {run.recipe.timeoutSeconds}s.</p>
       <details className="setup-run-command"><summary>Command recorded for this run</summary><pre><code>{run.recipe.command}</code></pre></details>
-      {run.error && <p className="setup-error">{run.error}</p>}
+      {guidance ? <p className="setup-error">{guidance}</p> : run.error && <p className="setup-error">{run.error}</p>}
       {blocked && !running && <p className="setup-error">A previous process may still be active. Another run is blocked until {new Date(run!.blockedUntil!).toLocaleString()}.</p>}
       <pre className="setup-output" aria-label={simulation ? 'Simulated setup output' : 'Saved setup output'} tabIndex={0}><code>{run.output || (running ? 'Waiting for output…' : 'No output recorded.')}</code></pre>
-      {run.truncated && <p className="workflow-message">Output exceeded the saved limit and was truncated.</p>}
+      {outputNotice && <p className="workflow-message">{outputNotice}</p>}
       {running && <p className="workflow-message">Status updates every 3 seconds while this tab is visible. The run continues when you leave this tab.</p>}
     </div>}
   </section>;

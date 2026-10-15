@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { api, type Bootstrap, type Repository, type Session, type SessionEvent } from './api';
+import { api, type Bootstrap, type Repository, type Session, type SessionEventPage } from './api';
+import { SessionActivity } from './SessionActivity';
+import { activityRequestUrl, emptyActivity, SessionActivityLoader, type ActivityState } from './session-activity';
 import { WorkStatusPanel, StopWorkCheck } from './WorkStatus';
 import { Cleanup } from './Cleanup';
 import type { RecoveryEvidenceProps } from './EndedOutcome';
@@ -89,13 +91,13 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<View>(route.current.view);
   const [tab, setTab] = useState<Tab>(route.current.tab);
-  const [events, setEvents] = useState<SessionEvent[]>([]);
+  const [activityState, setActivityState] = useState<ActivityState & { scope: string }>({ ...emptyActivity, scope: '' });
+  const activityLoader = useRef<SessionActivityLoader | null>(null);
   const modalOpener = useRef<HTMLElement | null>(null);
   const [openingActiveId, setOpeningActiveId] = useState<string | null>(null);
   const [modal, setModal] = useState<'launch' | 'stop' | 'pr' | 'continue' | null>(null);
   const [error, setError] = useState('');
   const [refreshError, setRefreshError] = useState('');
-  const [activityError, setActivityError] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(Date.now());
@@ -111,6 +113,9 @@ export default function App() {
   const selected = sessions.find(s => s.id === selectedId) || null;
   const preview = bootstrap?.mode === 'preview';
   const canUse = Boolean(preview || bootstrap?.user);
+  const activityScope = canUse && selected ? JSON.stringify([workspaceIdentity(bootstrap), selected.id]) : '';
+  const currentActivityScope = useRef(activityScope); currentActivityScope.current = activityScope;
+  const activity = activityState.scope === activityScope ? activityState : emptyActivity;
   // Keep only the selected scope's observations; never infer preservation from lifecycle.
   const recoveryScope = selected ? JSON.stringify([workspaceIdentity(bootstrap), selected.userId, selected.id, selected.repository, selected.branch, selected.baseBranch]) : '';
   const currentRecoveryScope = useRef(recoveryScope); currentRecoveryScope.current = recoveryScope;
@@ -268,8 +273,8 @@ export default function App() {
         setSelectionAnnouncement('');
         snapshotGate.current.invalidate(); connectionGate.current.invalidate(); sessionsRef.current = []; acceptedSessionsRef.current = []; confirmedAtRef.current = null; labelRevisions.current.clear();
         setConnectionObservation(emptyServiceObservation); setRepositoryObservation(emptyServiceObservation);
-        setSessions([]); setReminderSessions([]); setSessionsConfirmedAt(null); setSaveGuidanceTarget(null); setRepositories([]); setSelectedId(null); setEvents([]); setModal(null); setBusy(false);
-        setActivityError(''); setRefreshError(''); setTerminalConnection({ sessionId: null, status: 'not connected' });
+        setSessions([]); setReminderSessions([]); setSessionsConfirmedAt(null); setSaveGuidanceTarget(null); setRepositories([]); setSelectedId(null); setModal(null); setBusy(false);
+        setRefreshError(''); setTerminalConnection({ sessionId: null, status: 'not connected' });
       }
       identity.current = boot; setBootstrap(boot);
       configurationAccepted = true;
@@ -298,10 +303,18 @@ export default function App() {
   useEffect(() => { const interval = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(interval); }, []);
   useEffect(() => { if (!canUse) return; const interval = setInterval(() => { void refresh().catch(() => {}); }, 3000); return () => clearInterval(interval); }, [canUse, refresh]);
   useEffect(() => {
-    setEvents([]); setActivityError(''); if (!canUse || !selected) return; let active = true;
-    const update = () => api<SessionEvent[]>(`/sessions/${encodeURIComponent(selected.id)}/events`).then(data => { if (active) { setEvents(data); setActivityError(''); } }).catch(e => { if (active) setActivityError(e.message); });
-    void update(); const interval = setInterval(() => { void update(); }, 3000); return () => { active = false; clearInterval(interval); };
-  }, [selectedId, canUse, Boolean(selected)]);
+    setActivityState({ ...emptyActivity, scope: activityScope });
+    if (!activityScope || !selected) return;
+    const loader = new SessionActivityLoader(
+      (before, signal) => api<SessionEventPage>(activityRequestUrl(selected.id, before), undefined, { signal }),
+      state => setActivityState({ ...state, scope: activityScope }),
+      () => currentActivityScope.current === activityScope,
+    );
+    activityLoader.current = loader;
+    void loader.newest();
+    const interval = setInterval(() => { void loader.poll(); }, 3000);
+    return () => { clearInterval(interval); loader.dispose(); if (activityLoader.current === loader) activityLoader.current = null; };
+  }, [activityScope]);
   useEffect(() => {
     const repo = repositories.find(r => String(r.id) === repoId); setBranchError(''); setBranches([]); setBranch(''); if (!repo) return; let active = true; setBranchesLoading(true);
     api<{ name: string }[]>(`/repositories/${repo.installationId}/${repo.id}/branches`).then(data => { if (active) { setBranches(data); setBranch(data.some(b => b.name === repo.defaultBranch) ? repo.defaultBranch : data[0]?.name || ''); } }).catch(e => { if (active) setBranchError(e.message); }).finally(() => { if (active) setBranchesLoading(false); }); return () => { active = false; };
@@ -401,7 +414,7 @@ export default function App() {
         <div className="workspace-selection-announcement" role="status" aria-live="polite" aria-atomic="true">{selectionAnnouncement}</div>
         {canUse && showActiveContext && <ActiveWorkspaceContext sessions={otherActiveSessions} selectedId={selectedId} inMachines={view === 'machines'} now={now} confirmedAt={sessionsConfirmedAt} openingId={openingActiveId} onOpen={id => { void openActiveSession(id); }}/> }
         {canUse && <ExpiryReminders reminders={expiry.reminders} sessions={reminderSessions} now={now} preview={Boolean(preview)} confirmedAt={sessionsConfirmedAt} onOpenSession={expiry.openSession}/>}
-        {(error || configurationObservation.error || connectionObservation.error || repositoryObservation.error || refreshError || activityError) && !modal && <div className="error-banner" role="alert"><span>{error || configurationObservation.error || connectionObservation.error || (repositoryObservation.error ? `Repository list unavailable: ${repositoryObservation.error}` : '') || refreshError || activityError}</span><button className="text-button" onClick={() => { setError(''); setActivityError(''); void load(); }}>Retry</button></div>}
+        {(error || configurationObservation.error || connectionObservation.error || repositoryObservation.error || refreshError) && !modal && <div className="error-banner" role="alert"><span>{error || configurationObservation.error || connectionObservation.error || (repositoryObservation.error ? `Repository list unavailable: ${repositoryObservation.error}` : '') || refreshError}</span><button className="text-button" onClick={() => { setError(''); void load(); }}>Retry</button></div>}
         {bootstrap && !bootstrap.configured && !preview && <div className="setup-banner"><Icon name="integrations"/><span>Required settings were missing when configuration was recorded. Review setup before launching a machine.</span><button className="text-button" onClick={() => changeView('integrations')}>View setup <Icon name="arrow"/></button></div>}
         {loading && !bootstrap ? <div className="loading-state"><span className="loading-cursor">_</span>Connecting to your workspace…</div> : !bootstrap ? <div className="empty-state"><Icon name="machines" size={32}/><h1>Workspace unavailable</h1><p>Check the server connection, then try again.</p><button className="button primary" onClick={() => void load()}>Reconnect</button></div> : !canUse ? <div className="auth-state"><span className="eyebrow">YOUR NEXT WORKSPACE STARTS HERE</span><h1>Make room for<br/>what’s next<span className="title-cursor">_</span></h1><p>Launch an isolated environment from a GitHub repository. Work in the browser. Commit and push what matters. Let the rest disappear.</p><a className="button primary" href="/auth/github"><Icon name="github"/>Continue with GitHub<Icon name="arrow"/></a><div className="auth-facts"><span>01 / Isolated sandbox</span><span>02 / Initial lifetime: 1 hour</span><span>03 / Scoped credentials</span></div></div> : <><div className="compact-machine-workspace" hidden={view !== 'machines'}>
           <div className="page-heading"><div><span className="eyebrow">YOUR COMPUTE, ON BORROWED TIME</span><h1>Machines<span className="heading-count">{sessions.length.toString().padStart(2, '0')}</span></h1></div><button className="button primary" onClick={openLaunch} disabled={!canLaunchFresh}><Icon name="plus"/>New machine</button></div>
@@ -415,7 +428,7 @@ export default function App() {
             <div className="tabs" role="tablist" aria-label="Machine details" onKeyDown={event => {
               const next = machineTabKey(event.key, tab);
               if (next) { event.preventDefault(); changeTab(next); document.getElementById(`tab-${next}`)?.focus(); }
-            }}>{machineTabs.map(item => <button role="tab" tabIndex={tab === item ? 0 : -1} aria-selected={tab === item} aria-controls={`panel-${item}`} id={`tab-${item}`} key={item} className={tab === item ? 'active' : ''} onClick={() => changeTab(item)}>{item === 'terminal' && <Icon name="terminal"/>}{item[0].toUpperCase() + item.slice(1)}{item === 'activity' && <span>{events.length}</span>}</button>)}</div>
+            }}>{machineTabs.map(item => <button role="tab" tabIndex={tab === item ? 0 : -1} aria-selected={tab === item} aria-controls={`panel-${item}`} id={`tab-${item}`} key={item} className={tab === item ? 'active' : ''} onClick={() => changeTab(item)}>{item === 'terminal' && <Icon name="terminal"/>}{item[0].toUpperCase() + item.slice(1)}{item === 'activity' && activity.loaded && <span aria-label={`${activity.events.length} events on loaded page`}>{activity.events.length}</span>}</button>)}</div>
             <div role="tabpanel" id="panel-terminal" aria-labelledby="tab-terminal" hidden={tab !== 'terminal'}>
             {(selected.state === 'running' ? <ShellWorkspace key={`shells-${recoveryScope}`} navigationRequest={shellNavigationRequest} sessionId={selected.id} preview={Boolean(preview)} visible={tab === 'terminal' && view === 'machines'} repository={selected.repository} branch={selected.branch} expiresAt={selected.expiresAt} onStatusChange={onTerminalStatusChange}/> : <div className="terminal-placeholder"><span className="terminal-prompt">{selected.state === 'provisioning' ? '> _' : '[ / ]'}</span><h3>{selected.state === 'provisioning' ? 'Preparing your workspace' : selected.state === 'cleanup_pending' ? 'Cleaning up your workspace' : 'This machine has stopped'}</h3><p>{selected.error || (selected.state === 'provisioning' ? 'Creating a sandbox, cloning the repository, and preparing the shell.' : 'Review the access tab for the status of each cleanup operation.')}</p><button className="text-button" onClick={() => changeTab(selected.state === 'provisioning' ? 'activity' : 'access')}>View {selected.state === 'provisioning' ? 'activity' : 'cleanup'} <Icon name="arrow"/></button></div>)}
             <StartupGuide key={`startup-${selected.id}`} session={selected} preview={Boolean(preview)} terminalStatus={terminalConnection.sessionId === selected.id ? terminalConnection.status : 'not connected'} now={now}/>
@@ -427,7 +440,7 @@ export default function App() {
             {tab === 'setup' && <RepositorySetup key={`setup-${recoveryScope}`} session={selected} preview={Boolean(preview)} now={now}/>}
             {tab === 'preview' && view === 'machines' && <ApplicationPreview key={`preview-${recoveryScope}`} session={selected} preview={Boolean(preview)} now={now} accountKey={workspaceIdentity(bootstrap)} onOpenShell={canOpenPreviewShell(selected, now) ? openPreviewShell : undefined} onReviewPublished={reviewPreviewPublished} onContinueSavedWork={!busy && ['ended', 'failed'].includes(selected.state) && !continuationBlockedReason(selected) ? continuePreviewSavedWork : undefined}/>}
             {tab === 'access' && <section className="detail-panel"><div className="detail-heading"><div><span className="eyebrow">LEAVE NO ACCESS BEHIND</span><h3>Credentials & cleanup</h3><p>Each resource is tracked independently. A stopped machine does not imply every token has been revoked.</p></div>{['cleanup_pending', 'failed', 'ended'].includes(selected.state) && Object.values(selected.cleanup).some(value => ['failed', 'pending'].includes(value)) && <button className="button subtle small" disabled={busy} onClick={() => void mutate(`/sessions/${selected.id}/retry-cleanup`)}>Retry cleanup</button>}</div><Cleanup session={selected}/></section>}
-            {tab === 'activity' && <section className="detail-panel"><div className="detail-heading"><div><span className="eyebrow">WORKSPACE JOURNAL</span><h3>Activity log</h3><p>Lifecycle events from creation through cleanup.</p></div><span className="live-label"><span className="status-dot"/>Updates every 3s</span></div><div className="event-list">{events.length === 0 ? <p className="muted">No activity recorded yet.</p> : events.map(event => <div className="event-row" key={event.id}><span className="event-dot"/><time dateTime={event.at}>{new Date(event.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><div><span className="event-kind">{event.kind.replace(/[_\.]/g, ' ')}</span><p>{event.message}</p></div></div>)}</div></section>}
+            {tab === 'activity' && <SessionActivity state={activity} onOlder={() => { void activityLoader.current?.older(); }} onNewest={() => { void activityLoader.current?.newest(); }} onRetry={() => { void activityLoader.current?.retry(); }}/>}
             {tab === 'settings' && <section className="detail-panel"><div className="detail-heading"><div><span className="eyebrow">FINITE BY DESIGN</span><h3>Machine settings</h3><p>Session lifetime and workspace identity.</p></div></div><SessionLabelEditor key={selected.id} session={selected} onSaved={rememberLabel}/><dl className="settings-list"><div><dt>Created</dt><dd>{new Date(selected.createdAt).toLocaleString()}</dd></div><div><dt>Expires</dt><dd>{new Date(selected.expiresAt).toLocaleString()}</dd></div><div><dt>Maximum lifetime</dt><dd>{sessionMaxHours} {sessionMaxHours === 1 ? 'hour' : 'hours'} from creation</dd></div><div><dt>Session ID</dt><dd>{selected.id}</dd></div><div><dt>Sandbox ID</dt><dd>{selected.sandboxId || 'Not assigned'}</dd></div><div><dt>Base branch</dt><dd>{selected.baseBranch}</dd></div><div><dt>Work branch</dt><dd>{selected.branch}</dd></div></dl><div className="notice"><Icon name="clock"/><p>Machines are automatically stopped at expiry. Commit and push intentional changes before the countdown reaches zero.</p></div></section>}
             </div>}<footer className="machine-footer"><span><Icon name="shield"/>Scoped access. Disposable compute.</span><span>{preview ? 'Preview / lifecycle is simulated' : 'Changes must be committed and pushed to persist.'}</span></footer>
           </>}

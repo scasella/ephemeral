@@ -3,7 +3,14 @@ FROM node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bd
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
-COPY . .
+# The context allowlist excludes private files at every depth; copy only build inputs.
+COPY tsconfig.json vite.config.ts index.html ./
+COPY server ./server
+COPY shared ./shared
+COPY src ./src
+COPY tests ./tests
+COPY scripts ./scripts
+COPY sandbox ./sandbox
 RUN npm run build
 
 FROM node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
@@ -14,6 +21,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/server ./server
 COPY --from=build /app/shared ./shared
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/scripts/session-recovery.ts ./scripts/session-recovery.ts
 # Mounted disks can replace build-time ownership. Initialize only this data
 # directory as root, then drop privileges before executing the application.
 RUN <<'SCRIPT'

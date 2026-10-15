@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from '../server/app.js';
+import { createLiveApplication } from './helpers/create-live-application.js';
 import { readConfig } from '../server/config.js';
 import { digest, seal } from '../server/auth/crypto.js';
 import type { Session } from '../server/contracts.js';
@@ -25,7 +26,7 @@ describe('session label HTTP ownership and input', () => {
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'ep-label-http-'));
     const config = readConfig({ EPHEMERAL_MODE: 'preview', DATA_DIR: directory, PUBLIC_URL: 'http://localhost:4329', ENCRYPTION_KEY: key, ALLOWED_GITHUB_IDS: '42,99' });
-    application = await createApplication({ ...config, mode: 'live' });
+    application = await createLiveApplication({ ...config, mode: 'live' });
     await new Promise<void>(resolve => application.server.listen(0, '127.0.0.1', resolve));
     const address = application.server.address(); if (!address || typeof address === 'string') throw new Error('No server address');
     origin = `http://127.0.0.1:${address.port}`;

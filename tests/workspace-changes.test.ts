@@ -90,6 +90,128 @@ describe('read-only bounded change snapshots', () => {
     expect((await inspect(work, 'tracked.txt')).selected?.text).toContain('+changed');
     await expect(readFile(sentinel)).rejects.toThrow();
   });
+  it('compares an explicit eol=crlf file as one edited line, without modifying bytes or the index', async () => {
+    const work = await fixture();
+    await writeFile(join(work, '.gitattributes'), 'tracked.txt text eol=crlf\n');
+    await writeFile(join(work, 'tracked.txt'), 'one\ntwo\nthree\n');
+    await git(work, ['add', '.gitattributes', 'tracked.txt']); await git(work, ['commit', '-m', 'explicit crlf']);
+    await writeFile(join(work, 'tracked.txt'), 'one\r\nchanged\r\nthree\r\n');
+    const expected = await git(work, ['diff', '--numstat', '--', 'tracked.txt']); expect(expected).toBe('1\t1\ttracked.txt');
+    const index = await readFile(join(work, '.git/index')), bytes = await readFile(join(work, 'tracked.txt'));
+    const result = await inspect(work, 'tracked.txt');
+    expect(result.selected?.state).toBe('text'); expect(result.selected?.reason).toContain('EOL-normalized');
+    expect(result.selected?.text).toContain('-two\n+changed\n');
+    expect(result.selected?.text).not.toContain('-one'); expect(result.selected?.text).not.toContain('+three');
+    expect(result.selected?.text).not.toContain('\r');
+    expect(await readFile(join(work, '.git/index'))).toEqual(index); expect(await readFile(join(work, 'tracked.txt'))).toEqual(bytes);
+  });
+  it('preserves missing final newline and UTF-8 text under an explicit EOL rule', async () => {
+    const work = await fixture();
+    await writeFile(join(work, '.gitattributes'), 'tracked.txt text eol=crlf\n');
+    await writeFile(join(work, 'tracked.txt'), 'café\n日本語');
+    await git(work, ['add', '.gitattributes', 'tracked.txt']); await git(work, ['commit', '-m', 'utf8 no final newline']);
+    await writeFile(join(work, 'tracked.txt'), 'café\r\n日本語 changed');
+    const result = await inspect(work, 'tracked.txt');
+    expect(result.selected?.reason).toContain('EOL-normalized'); expect(result.selected?.text).toContain(' café\n');
+    expect(result.selected?.text).toContain('-日本語\n\\ No newline at end of file\n+日本語 changed\n\\ No newline at end of file');
+    await writeFile(join(work, 'tracked.txt'), Buffer.from([0, 1, 2]));
+    expect((await inspect(work, 'tracked.txt')).selected?.state).toBe('binary');
+    await writeFile(join(work, 'tracked.txt'), Buffer.from([255]));
+    expect((await inspect(work, 'tracked.txt')).selected?.state).toBe('binary');
+  });
+  it('honestly labels mixed EOL, lone CR, unspecified normalization and unsupported attributes as raw', async () => {
+    const work = await fixture();
+    await writeFile(join(work, '.gitattributes'), 'tracked.txt text eol=crlf\n');
+    await writeFile(join(work, 'tracked.txt'), 'one\ntwo\n');
+    await git(work, ['add', '.gitattributes', 'tracked.txt']); await git(work, ['commit', '-m', 'canonical']);
+    for (const content of ['one\r\nchanged\n', 'one\rchanged\r']) {
+      await writeFile(join(work, 'tracked.txt'), content);
+      const result = await inspect(work, 'tracked.txt');
+      expect(result.selected?.reason).toContain('Raw UTF-8 byte comparison'); expect(result.selected?.text).toContain(content.replaceAll('\n', '\n+').replace(/\+$/, ''));
+    }
+    for (const attrs of ['', 'tracked.txt text eol=crlf ident\n', 'tracked.txt text=auto eol=crlf\n', 'tracked.txt -text eol=crlf\n', 'tracked.txt text eol=crlf filter=custom\n', 'tracked.txt text eol=crlf diff=custom\n', 'tracked.txt text eol=crlf -diff\n', 'tracked.txt text eol=crlf working-tree-encoding=UTF-8\n']) {
+      await writeFile(join(work, '.gitattributes'), attrs); await writeFile(join(work, 'tracked.txt'), 'one\r\nchanged\r\n');
+      const result = await inspect(work, 'tracked.txt');
+      expect(result.selected?.reason).toContain('Raw UTF-8 byte comparison'); expect(result.selected?.text).toContain('+one\r\n');
+    }
+  });
+  it('never executes configured clean, smudge or process filters, including while checking status', async () => {
+    const work = await fixture(), sentinel = join(work, 'filter-executed');
+    // Configure filters only after staging, so the fixture setup cannot run them.
+    await writeFile(join(work, '.gitattributes'), 'tracked.txt filter=attack text eol=crlf\n');
+    await git(work, ['add', '.gitattributes']); await git(work, ['commit', '-m', 'filter attrs']);
+    for (const setting of ['clean', 'smudge', 'process']) await git(work, ['config', `filter.attack.${setting}`, `touch '${sentinel}'; cat`]);
+    await git(work, ['config', 'filter.attack.required', 'true']);
+    await writeFile(join(work, 'tracked.txt'), 'changed\r\n');
+    const index = await readFile(join(work, '.git/index')), bytes = await readFile(join(work, 'tracked.txt'));
+    const listed = await inspect(work); expect(listed.state).toBe('known'); expect(listed.files.some(file => file.path === 'tracked.txt')).toBe(true);
+    const result = await inspect(work, 'tracked.txt');
+    expect(result.selected?.state).toBe('text'); expect(result.selected?.reason).toContain('Raw UTF-8 byte comparison'); expect(result.selected?.text).toContain('+changed\r\n');
+    expect(await readFile(join(work, '.git/index'))).toEqual(index); expect(await readFile(join(work, 'tracked.txt'))).toEqual(bytes);
+    await expect(readFile(sentinel)).rejects.toThrow();
+  });
+  it('keeps newly introduced filter configuration inert during a status race', async () => {
+    const work = await fixture(), sentinel = join(work, 'raced-filter-executed');
+    await writeFile(join(work, '.gitattributes'), 'tracked.txt filter=late\n');
+    await git(work, ['add', '.gitattributes']); await git(work, ['commit', '-m', 'late filter attrs']);
+    await writeFile(join(work, 'tracked.txt'), 'changed by user\n');
+    const source = changeInspectionSource(work, 'tracked.txt').replace('raw=git(status_args)', `
+        for setting in ('clean','smudge','process'):
+            subprocess.run(['/usr/bin/git','config','filter.late.'+setting,${JSON.stringify(`touch '${sentinel}'; cat`)}],env=env,check=True)
+        subprocess.run(['/usr/bin/git','config','filter.late.required','true'],env=env,check=True)
+        raw=git(status_args)`);
+    const { stdout } = await execute('python3', ['-I', '-c', source]);
+    const result = parseWorkspaceChanges(JSON.parse(stdout.slice(0, -CHANGES_FRAME.length)));
+    expect(result).toMatchObject({ state: 'known', selected: { state: 'text' } });
+    expect(result.selected?.text).toContain('+changed by user'); await expect(readFile(sentinel)).rejects.toThrow();
+  });
+  it('supports linked worktree gitfiles without using their repository filter configuration', async () => {
+    const original = await fixture(), work = await mkdtemp(join(tmpdir(), 'ep-linked-changes-')); cleanup.push(work);
+    await git(original, ['worktree', 'add', '-b', 'linked-review', work]);
+    await writeFile(join(work, 'tracked.txt'), 'linked worktree edit\n');
+    const result = await inspect(work, 'tracked.txt');
+    expect(result).toMatchObject({ state: 'known', selected: { state: 'text' } });
+    expect(result.selected?.text).toContain('+linked worktree edit');
+  });
+  it('declines oversized index metadata before running any worktree status', async () => {
+    const work = await fixture();
+    const source = changeInspectionSource(work, 'tracked.txt').replace('cap=16777216', 'cap=10');
+    const { stdout } = await execute('python3', ['-I', '-c', source]);
+    expect(parseWorkspaceChanges(JSON.parse(stdout.slice(0, -CHANGES_FRAME.length))))
+      .toMatchObject({ state: 'unknown', files: [], selected: null });
+  });
+  it('uses bounded info attributes as data and rejects metadata changes during inspection', async () => {
+    const work = await fixture();
+    await writeFile(join(work, '.git/info/attributes'), 'tracked.txt text eol=crlf\n');
+    await writeFile(join(work, 'tracked.txt'), 'changed metadata preview\r\n');
+    expect((await inspect(work, 'tracked.txt')).selected?.reason).toContain('EOL-normalized');
+    for (const mutation of ["open(index_path,'ab').write(b'changed')", "open(info_path,'wb').write(b'tracked.txt -text\\n')"]) {
+      const index = await readFile(join(work, '.git/index')), info = await readFile(join(work, '.git/info/attributes'));
+      const source = changeInspectionSource(work, 'tracked.txt').replace('def preview(root, file):', `def preview(root, file):\n    ${mutation}`);
+      const { stdout } = await execute('python3', ['-I', '-c', source]);
+      expect(parseWorkspaceChanges(JSON.parse(stdout.slice(0, -CHANGES_FRAME.length)))).toMatchObject({ state: 'unknown', files: [], selected: null });
+      await writeFile(join(work, '.git/index'), index); await writeFile(join(work, '.git/info/attributes'), info);
+    }
+  });
+  it('preserves bounded local info/exclude rules and declines a changing exclude snapshot', async () => {
+    const work = await fixture(), excludedText = 'LOCAL-SECRET-TEXT';
+    await writeFile(join(work, '.git/info/exclude'), 'local-secret.txt\n');
+    await writeFile(join(work, '.gitignore'), 'ignored-by-worktree.txt\n');
+    await writeFile(join(work, 'local-secret.txt'), excludedText);
+    await writeFile(join(work, 'ignored-by-worktree.txt'), excludedText);
+    await writeFile(join(work, 'visible.txt'), 'visible');
+    const exclude = await readFile(join(work, '.git/info/exclude'));
+    const result = await inspect(work, 'local-secret.txt');
+    expect(result).toMatchObject({ state: 'known', selected: { state: 'unavailable', text: null } });
+    expect(result.files.map(file => file.path)).toEqual(['.gitignore', 'visible.txt']);
+    expect(JSON.stringify(result)).not.toContain(excludedText);
+    expect(await readFile(join(work, '.git/info/exclude'))).toEqual(exclude);
+    const source = changeInspectionSource(work, 'visible.txt').replace('def preview(root, file):', `def preview(root, file):\n    open(exclude_path,'wb').write(b'new-rule\\n')`);
+    const { stdout } = await execute('python3', ['-I', '-c', source]);
+    expect(parseWorkspaceChanges(JSON.parse(stdout.slice(0, -CHANGES_FRAME.length))))
+      .toMatchObject({ state: 'unknown', files: [], selected: null });
+    expect(stdout).not.toContain(excludedText);
+  });
   it('shows deletion when the parent directory is removed and labels mode-only differences', async () => {
     const work = await fixture(); await mkdir(join(work, 'nested')); await writeFile(join(work, 'nested/file'), 'nested base\n');
     await git(work, ['add', 'nested']); await git(work, ['commit', '-m', 'nested']); await rm(join(work, 'nested'), { recursive: true });
@@ -106,7 +228,7 @@ describe('read-only bounded change snapshots', () => {
     const overflow = changeInspectionSource(work).replace('cap=1048576', 'cap=10');
     const { stdout } = await execute('python3', ['-I', '-c', overflow]);
     expect(parseWorkspaceChanges(JSON.parse(stdout.slice(0, -CHANGES_FRAME.length)))).toMatchObject({ state: 'unknown', headSha: null, files: [], selected: null });
-    const moving = changeInspectionSource(work, 'tracked.txt').replace('def preview(root, file):', `def preview(root, file):\n    git(['update-ref','HEAD','HEAD~1'])`);
+    const moving = changeInspectionSource(work, 'tracked.txt').replace('def preview(root, file):', `def preview(root, file):\n    subprocess.run(['/usr/bin/git','update-ref','HEAD','HEAD~1'],env=env,check=True)`);
     const raced = await execute('python3', ['-I', '-c', moving]);
     expect(parseWorkspaceChanges(JSON.parse(raced.stdout.slice(0, -CHANGES_FRAME.length)))).toMatchObject({ state: 'unknown', files: [], selected: null });
   });
@@ -129,7 +251,7 @@ describe('read-only bounded change snapshots', () => {
     expect(result.state).toBe('unknown'); expect(result.selected).toBeNull(); expect(stdout).not.toContain('root:');
     await rm(join(work, 'nested')); await rename(join(work, 'previous'), join(work, 'nested'));
     // Isolate the reader's safety check from the later Git coherence check.
-    const readerOnly = source.replace("if git(['rev-parse','--verify','HEAD'],100).decode('ascii').strip()!=head or git(status_args)!=raw:", "if False:");
+    const readerOnly = source.replace("if git(status_args)!=raw or metadata_bytes(index_path)!=index or metadata_bytes(info_path,65536)!=info:", "if False:");
     const isolated = await execute('python3', ['-I', '-c', readerOnly]);
     const snapshot = parseWorkspaceChanges(JSON.parse(isolated.stdout.slice(0, -CHANGES_FRAME.length)));
     expect(snapshot).toMatchObject({ state: 'known', selected: { state: 'unavailable', text: null } });

@@ -23,6 +23,12 @@ Deployment is pending. This guide and `render.yaml` prepare a singleton containe
 
 Compose passes the PostgreSQL password through `PGPASSWORD` separately from its password-free URI. Do not render an operator's Compose configuration into public logs.
 
+Compose restarts both services with `unless-stopped`. The application's healthcheck calls `/healthz`, which checks the database and returns HTTP 503 during a database outage or shutdown. Docker marks a failed healthcheck unhealthy; restart policy acts when the application exits, including controlled exit after loss of its singleton database connection. Ordinary idle query-client loss can recover through the pool without exiting.
+
+Application shutdown has a 25-second deadline and an independent 30-second process exit deadline; Compose allows 40 seconds before sending a forced kill. Graceful shutdown preserves active VMs for reconciliation after restart. A timeout or incomplete resource drain causes a nonzero exit. If application work is still outstanding, database ownership is retained through process exit; an incompletely closed local PGlite database keeps `control-plane.lock` for manual inspection instead of allowing an unsafe concurrent restart.
+
+Use a direct PostgreSQL connection or a pooler that preserves session affinity. Transaction pooling cannot preserve the connection-scoped singleton advisory lock. For database diagnostics, inspect `pg_stat_activity` for `application_name = 'ephemeral-control-plane'`; join `pg_locks` on PID and check `locktype = 'advisory'`, `objid = 378120985` and `granted` to identify its owner. `pg_isready` only checks PostgreSQL availability and does not establish that the app holds ownership or can serve requests. After a local PGlite shutdown failure, verify that the recorded process and all other control planes using its directory are stopped before manually removing `control-plane.lock`.
+
 ## Sites compatibility
 
 Sites is suitable for a product information page. Hosting the full application there would require replacing the process/disk Git gateway, PostgreSQL locking and reconciliation architecture. Splitting the current frontend onto another origin also requires a deliberate cookie, OAuth, CSRF and WebSocket design. See [the detailed assessment](HOSTING.md).

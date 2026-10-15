@@ -31,11 +31,11 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - name: Install local integration test tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends git openssl python3 tmux procps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends git openssl python3 tmux procps util-linux
       - name: Install locked dependencies
         run: npm ci
       - name: Run bounded local tests
-        run: npm run test:ci
+        run: setsid --wait npm run test:ci
       - name: Verify local launch isolation
         run: npm run test:local
       - name: Check guided setup shell

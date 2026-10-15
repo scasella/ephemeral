@@ -8,6 +8,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createApplication } from '../server/app.js';
+import { createLiveApplication } from './helpers/create-live-application.js';
 import { createPreviewViewer } from '../server/application-preview-viewer.js';
 import { createPreviewTokenStore } from '../server/application-preview-secrets.js';
 import { readConfig } from '../server/config.js';
@@ -57,7 +58,7 @@ describe('private application preview HTTP and websocket boundaries', () => {
     fixtureWs = new WebSocketServer({ server: fixture }); fixtureWs.on('connection', (ws, req) => { lastHeaders = req.headers; ws.on('message', (data, binary) => ws.send(data, { binary })); });
     await new Promise<void>(resolve => fixture.listen(0, '127.0.0.1', resolve)); upstreamOrigin = address(fixture).replace('http:', 'https:');
     const config = { ...readConfig({ EPHEMERAL_MODE: 'preview', PUBLIC_URL: controlOrigin, PREVIEW_PUBLIC_URL: viewerBaseOrigin, PREVIEW_PORT: '4358', PREVIEW_LOCAL_ONLY: '1', DATA_DIR: directory, ENCRYPTION_KEY: key, ALLOWED_GITHUB_IDS: '42,99' }), mode: 'live' as const };
-    application = await createApplication(config, { previewAuthorizationCacheMs: 0 }); viewer = createPreviewViewer(config, application.applicationPreview, { ca: cert, fixtureOrigin: upstreamOrigin });
+    application = await createLiveApplication(config, { previewAuthorizationCacheMs: 0 }); viewer = createPreviewViewer(config, application.applicationPreview, { ca: cert, fixtureOrigin: upstreamOrigin });
     for (const server of [application.server, viewer.server]) await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); api = address(application.server); viewerBase = address(viewer.server);
     for (const [secret, id] of [['preview-owner', '42'], ['preview-other', '99'], ['preview-sibling', '42']]) {
       await application.db.query('INSERT INTO browser_sessions(hash,user_id,login,avatar_url,credential,expires_at) VALUES($1,$2,$3,$4,$5,$6)', [digest(secret), id, 'owner', '', seal('credential', key), new Date(Date.now() + 3600_000).toISOString()]);

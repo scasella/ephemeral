@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { request as httpsRequest, type RequestOptions } from 'node:https';
 import { WebSocket, WebSocketServer } from 'ws';
+import { trackListener, WorkTracker } from './shutdown.js';
 import type { Config } from './config.js';
 import { generationViewerOrigin, previewGenerationForHost } from '../shared/preview-origin.js';
 import { cookies } from './auth/index.js';
@@ -41,11 +42,16 @@ export function createPreviewViewer(config: Config, preview: ApplicationPreview,
   // A caller-supplied CA and exact loopback origin permit real TLS fixture tests only.
   if (tls.fixtureOrigin && (!tls.ca || !['localhost', '127.0.0.1'].includes(new URL(tls.fixtureOrigin).hostname))) throw new Error('TLS fixtures require a loopback origin and explicit certificate.');
   const cookieName = secure ? '__Host-ephemeral-preview' : 'ephemeral-preview';
+  const work = new WorkTracker();
+  let closing = false;
+  let closePromise: Promise<void> | undefined;
+  const pendingUpgrades = new Set<() => void>();
   let active = 0;
   const sessionCounts = new Map<string, number>();
   const sockets = new Map<WebSocket, { grant: PreviewGrant; upstream: WebSocket; timer: NodeJS.Timeout; expiry: NodeJS.Timeout }>();
   const pending = new Map<string, Set<AbortController>>();
   function admitTotal() {
+    if (closing) throw new ApplicationPreviewError(503, 'Preview is restarting.');
     if (active >= 64) throw new ApplicationPreviewError(429, 'Too many preview connections.');
     active++; let released = false;
     return () => { if (!released) { released = true; active--; } };
@@ -72,7 +78,7 @@ export function createPreviewViewer(config: Config, preview: ApplicationPreview,
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.end(failure instanceof ApplicationPreviewError ? failure.message : 'Application preview could not connect. Check the selected port and retry.');
   }
-  const server = createServer(async (req, res) => {
+  const server = createServer((req, res) => { void work.track((async () => {
     res.setHeader('Content-Security-Policy', CSP); res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'same-origin'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
@@ -86,6 +92,7 @@ export function createPreviewViewer(config: Config, preview: ApplicationPreview,
         if (req.headers.origin !== config.publicUrl || (req.headers['sec-fetch-site'] && !['cross-site', 'same-site'].includes(String(req.headers['sec-fetch-site']))) || req.headers['content-type']?.split(';')[0] !== 'application/x-www-form-urlencoded') throw new ApplicationPreviewError(403, 'Preview handoff is not authorized.');
         const form = new URLSearchParams((await body(req, 8192)).toString('utf8'));
         if ([...form.keys()].some(key => key !== 'token') || form.getAll('token').length !== 1) throw new ApplicationPreviewError(400, 'Invalid preview handoff.');
+        if (closing) throw new ApplicationPreviewError(503, 'Preview is restarting.');
         const result = await preview.consume(form.get('token') || '', generation);
         res.setHeader('Set-Cookie', `${cookieName}=${result.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.max(0, Math.floor((Date.parse(result.expiresAt) - Date.now()) / 1000))}${secure ? '; Secure' : ''}`);
         res.statusCode = 303; res.setHeader('Location', '/'); res.end(); return;
@@ -94,6 +101,7 @@ export function createPreviewViewer(config: Config, preview: ApplicationPreview,
       if (!['GET', 'HEAD'].includes(req.method || '') && req.headers.origin !== viewerOrigin) throw new ApplicationPreviewError(403, 'Cross-origin preview requests are not permitted.');
       if (req.headers.origin && req.headers.origin !== viewerOrigin) throw new ApplicationPreviewError(403, 'Cross-origin preview requests are not permitted.');
       grant = await preview.readGrant(cookies(req)[cookieName] || '', generation);
+      if (closing) throw new ApplicationPreviewError(503, 'Preview is restarting.');
       const totalRelease = release, sessionRelease = admitSession(grant.session_id); release = () => { totalRelease(); sessionRelease(); };
       controller = new AbortController();
       const set = pending.get(grant.session_id) || new Set<AbortController>(); set.add(controller); pending.set(grant.session_id, set);
@@ -124,34 +132,57 @@ export function createPreviewViewer(config: Config, preview: ApplicationPreview,
       res.statusCode = response.status; res.end(req.method === 'HEAD' ? undefined : response.payload);
     } catch (failure) { error(res, failure); }
     finally { clearTimeout(deadline); release?.(); if (grant && controller) { const set = pending.get(grant.session_id); set?.delete(controller); if (!set?.size) pending.delete(grant.session_id); } }
-  });
+  })()).catch(() => res.destroy()); });
+  const listener = trackListener(server);
   server.requestTimeout = 30_000; server.headersTimeout = 10_000;
   const negotiatedProtocols = new WeakMap<IncomingMessage, string>();
   const wss = new WebSocketServer({ noServer: true, maxPayload: REQUEST_LIMIT, perMessageDeflate: false,
     handleProtocols: (protocols, req) => { const selected = negotiatedProtocols.get(req); return selected && protocols.has(selected) ? selected : false; } });
-  server.on('upgrade', async (req, socket, head) => {
+  server.on('upgrade', (req, socket, head) => { void work.track((async () => {
+    if (closing) { socket.destroy(); return; }
     let release: (() => void) | undefined, upstream: WebSocket | undefined;
-    const timeout = setTimeout(() => { upstream?.terminate(); socket.destroy(); }, 20_000);
+    let cancelled = false;
+    const cancel = () => {
+      pendingUpgrades.delete(cancel);
+      cancelled = true; clearTimeout(timeout); upstream?.terminate();
+      release?.(); release = undefined; socket.destroy();
+    };
+    // The raw socket can reset while authorization or the upstream handshake
+    // is pending, before ws has installed its own error handler.
+    socket.on('error', cancel); socket.once('close', cancel);
+    const timeout = setTimeout(cancel, 20_000);
+    pendingUpgrades.add(cancel);
+    const unavailable = () => {
+      if (!closing && !cancelled && !socket.destroyed && socket.readable && socket.writable) return false;
+      cancel(); return true;
+    };
     try {
       release = admitTotal();
       const { path, generation, viewerOrigin } = checkRequest(req);
       if (path.startsWith('/__ephemeral') || req.headers.origin !== viewerOrigin) throw new ApplicationPreviewError(403, 'Preview websocket is not authorized.');
       const grant = await preview.readGrant(cookies(req)[cookieName] || '', generation);
+      if (unavailable()) return;
       const totalRelease = release, sessionRelease = admitSession(grant.session_id); release = () => { totalRelease(); sessionRelease(); };
-      const target = await preview.target(grant), url = new URL(req.url!, targetOrigin(target.origin, target.sandboxId, tls.fixtureOrigin)); url.protocol = 'wss:';
+      const target = await preview.target(grant);
+      if (unavailable()) return;
+      const url = new URL(req.url!, targetOrigin(target.origin, target.sandboxId, tls.fixtureOrigin)); url.protocol = 'wss:';
       const protocols = String(req.headers['sec-websocket-protocol'] || '').split(',').map(x => x.trim()).filter(Boolean);
       if (protocols.length > 8 || protocols.some(x => x.length > 128 || !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(x))) throw new ApplicationPreviewError(400, 'Invalid websocket protocol.');
       upstream = new WebSocket(url, protocols, { ...tls, headers: target.headers, maxPayload: REQUEST_LIMIT, perMessageDeflate: false, followRedirects: false, handshakeTimeout: 10_000 });
       upstream.on('error', () => {});
       await new Promise<void>((resolve, reject) => { upstream!.once('open', resolve); upstream!.once('error', reject); upstream!.once('close', () => reject(new Error('Upstream closed'))); });
-      await preview.validate(grant); clearTimeout(timeout);
+      if (unavailable()) return;
+      await preview.validate(grant);
+      if (unavailable()) return;
+      clearTimeout(timeout);
+      pendingUpgrades.delete(cancel);
       negotiatedProtocols.set(req, upstream.protocol);
       wss.handleUpgrade(req, socket, head, client => {
         const remote = upstream!; let checking = false;
         const close = () => { client.close(1000, 'Preview access ended'); remote.terminate(); };
         const timer = setInterval(() => {
           if (checking) return; checking = true;
-          void preview.validate(grant).catch(close).finally(() => { checking = false; });
+          void work.track(preview.validate(grant).catch(close).finally(() => { checking = false; }));
         }, 2000);
         const expiry = setTimeout(close, Math.max(0, Date.parse(grant.expires_at) - Date.now()));
         sockets.set(client, { grant, upstream: remote, timer, expiry });
@@ -162,17 +193,21 @@ export function createPreviewViewer(config: Config, preview: ApplicationPreview,
         client.once('close', () => { clearInterval(timer); clearTimeout(expiry); sockets.delete(client); remote.terminate(); release?.(); release = undefined; });
       });
     } catch {
-      clearTimeout(timeout); upstream?.terminate(); release?.(); socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); socket.destroy();
+      if (!cancelled && !socket.destroyed) socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      cancel();
     }
-  });
+  })()).catch(() => socket.destroy()); });
   const unlisten = preview.onRevoke(id => {
     for (const [client, state] of sockets) if (state.grant.session_id === id) { client.close(1000, 'Preview closed'); state.upstream.terminate(); }
     for (const controller of pending.get(id) || []) controller.abort();
   });
-  return { server, async close() {
+  return { server, close() {
+    if (closePromise) return closePromise;
+    closing = true;
+    for (const cancel of pendingUpgrades) cancel();
     unlisten(); for (const controllers of pending.values()) for (const controller of controllers) controller.abort();
     for (const [client, state] of sockets) { clearInterval(state.timer); clearTimeout(state.expiry); client.terminate(); state.upstream.terminate(); }
-    await new Promise<void>(resolve => wss.close(() => resolve()));
-    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+    closePromise = Promise.all([new Promise<void>(resolve => wss.close(() => resolve())), listener.close()]).then(() => work.drain());
+    return closePromise;
   } };
 }

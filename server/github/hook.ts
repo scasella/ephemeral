@@ -17,6 +17,7 @@ if (ref !== 'refs/heads/' + process.env.EP_BRANCH) reject('only the assigned ses
 if (newOid === zero) reject('branch deletion is disabled');
 const run = args => spawnSync('git', args, { env: process.env, encoding: 'utf8', timeout: 90000, maxBuffer: 1048576 });
 if (run(['cat-file', '-e', newOid + '^{commit}']).status !== 0) reject('branch must point to a commit');
+if (oldOid === zero && !process.env.EP_BASE_OID) reject(process.env.EP_BASE_ERROR || 'the original clone base is unavailable; start a fresh session');
 const ancestor = oldOid === zero ? process.env.EP_BASE_OID : oldOid;
 if (!ancestor || run(['merge-base', '--is-ancestor', ancestor, newOid]).status !== 0) reject('non-fast-forward push is disabled');
 const request = http.request({ socketPath: process.env.EP_GATE_SOCKET, path: '/', method: 'POST',

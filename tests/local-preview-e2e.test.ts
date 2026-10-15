@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import http, { type IncomingMessage } from 'node:http';
 import https from 'node:https';
@@ -20,13 +20,63 @@ import { previewGatewaySource, PREVIEW_DIAGNOSTIC_PATH } from '../server/infra/p
 import { digest, seal } from '../server/auth/crypto.js';
 import type { Config } from '../server/config.js';
 import type { Session } from '../server/contracts.js';
+import { TerminalAttachment, type TerminalState } from '../src/terminal-connection.js';
 
-const local = vi.hoisted(() => ({ directory: '', ingress: '', native: 'synthetic-native-ingress-only', credential: 'synthetic-repository-only' }));
+const local = vi.hoisted(() => ({ directory: '', ingress: '', native: 'synthetic-native-ingress-only', credential: 'synthetic-repository-only',
+  terminal: { generation: 0, primaryOpen: true, nextRecoveryDelayed: false, nextAttachmentDelayed: false, failNextRecovery: false, writeDelayMs: 0,
+    recoveryWaiting: [] as (() => void)[], attachmentWaiting: [] as (() => void)[], exits: new Set<() => void>(),
+    recoveryCalls: 0, recoveries: 0, attachments: 0, activeAttachments: 0, writes: 0, inputBytes: 0, inputSha256: '', resetInput: undefined as (() => void) | undefined },
+}));
 // Reuse the real app and viewer. Only the provider and external GitHub service are synthetic.
 vi.mock('../server/infra/e2b.js', async () => {
   const { PreviewProvider } = await import('../server/preview.js');
+  const { createHash } = await import('node:crypto');
+  const terminal = local.terminal;
+  let inputHash = createHash('sha256');
+  terminal.resetInput = () => { inputHash = createHash('sha256'); terminal.writes = 0; terminal.inputBytes = 0; terminal.inputSha256 = inputHash.copy().digest('hex'); };
+  terminal.resetInput();
   return { E2BProvider: class extends PreviewProvider {
     async exists() { return true; }
+    async inspectShell(session: Session, shellId: string) { return shellId === 'codex' ? terminal.primaryOpen ? 'open' as const : 'closed' as const : super.inspectShell(session, shellId); }
+    async recoverPrimaryShell(_session: Session) {
+      const generation = terminal.generation;
+      ++terminal.recoveryCalls;
+      if (terminal.nextRecoveryDelayed) { terminal.nextRecoveryDelayed = false; await new Promise<void>(done => terminal.recoveryWaiting.push(done)); }
+      if (generation !== terminal.generation) throw new Error('Synthetic session was reset');
+      if (terminal.failNextRecovery) { terminal.failNextRecovery = false; throw new Error('Synthetic primary recovery failure'); }
+      if (!terminal.primaryOpen) { terminal.primaryOpen = true; ++terminal.recoveries; }
+      return 'open' as const;
+    }
+    async connectTerminal(sandboxId: string, onData: (data: Uint8Array) => void, cols: number, rows: number, shellId = 'codex') {
+      const generation = terminal.generation;
+      if (shellId === 'codex' && terminal.nextAttachmentDelayed) { terminal.nextAttachmentDelayed = false; await new Promise<void>(done => terminal.attachmentWaiting.push(done)); }
+      if (generation !== terminal.generation) throw new Error('Synthetic session was reset');
+      if (shellId === 'codex' && !terminal.primaryOpen) throw new Error('Synthetic primary shell is stopped');
+      const connection = await super.connectTerminal(sandboxId, onData, cols, rows, shellId);
+      if (generation !== terminal.generation) { await connection.disconnect(); throw new Error('Synthetic session was reset'); }
+      ++terminal.attachments; ++terminal.activeAttachments;
+      let disconnected = false;
+      const listeners = new Set<() => void>();
+      return {
+        async write(data: string) {
+          if (terminal.writeDelayMs) await new Promise(done => setTimeout(done, terminal.writeDelayMs));
+          if (disconnected || generation !== terminal.generation || (shellId === 'codex' && !terminal.primaryOpen)) throw new Error('Synthetic terminal stopped');
+          inputHash.update(data); ++terminal.writes; terminal.inputBytes += Buffer.byteLength(data); terminal.inputSha256 = inputHash.copy().digest('hex');
+          await connection.write(data);
+        },
+        resize: connection.resize.bind(connection),
+        onExit(listener: () => void) {
+          if (shellId === 'codex') { listeners.add(listener); terminal.exits.add(listener); }
+          return () => { listeners.delete(listener); terminal.exits.delete(listener); };
+        },
+        async disconnect() {
+          if (disconnected) return;
+          disconnected = true; if (generation === terminal.generation) --terminal.activeAttachments;
+          for (const listener of listeners) terminal.exits.delete(listener);
+          listeners.clear(); await connection.disconnect();
+        },
+      };
+    }
     async previewTarget(session: Session, port: number, signal?: AbortSignal) {
       // Readiness validates the canonical provider hostname before the exact test transport maps it locally.
       return { origin: signal ? `https://49152-${session.sandboxId}.e2b.app` : local.ingress,
@@ -112,15 +162,36 @@ async function resetSession() {
     sandboxId: 'local-synthetic-sandbox', endedAt: null, error: null, cleanup: { vm: 'pending', github: 'pending', gateway: 'pending', codex: 'pending' }, codexRemoteRevocation: 'unverified' };
   await application.repo.insert(session);
   metadataFailure = false; delayedShells = false;
+  for (const listener of [...local.terminal.exits]) listener();
+  local.terminal.exits.clear(); ++local.terminal.generation;
+  local.terminal.attachments = 0; local.terminal.activeAttachments = 0;
+  for (const release of local.terminal.recoveryWaiting.splice(0)) release();
+  for (const release of local.terminal.attachmentWaiting.splice(0)) release();
+  local.terminal.primaryOpen = true; local.terminal.nextRecoveryDelayed = false; local.terminal.nextAttachmentDelayed = false;
+  local.terminal.failNextRecovery = false; local.terminal.writeDelayMs = 0; local.terminal.recoveryCalls = 0; local.terminal.recoveries = 0;
+  local.terminal.resetInput?.();
   if (viewerBase) configuration.previewPublicUrl = viewerBase;
 }
 const workspacePath = () => `/?session=${session.id}&tab=preview`;
+function terminalStats() {
+  const terminal = local.terminal;
+  return { synthetic: true, primaryOpen: terminal.primaryOpen, nextRecoveryDelayed: terminal.nextRecoveryDelayed, nextAttachmentDelayed: terminal.nextAttachmentDelayed,
+    failNextRecovery: terminal.failNextRecovery, writeDelayMs: terminal.writeDelayMs, recoveryWaiting: terminal.recoveryWaiting.length, attachmentWaiting: terminal.attachmentWaiting.length,
+    recoveryCalls: terminal.recoveryCalls, recoveries: terminal.recoveries, attachments: terminal.attachments, activeAttachments: terminal.activeAttachments,
+    writes: terminal.writes, inputBytes: terminal.inputBytes, inputSha256: terminal.inputSha256 };
+}
 function controls() {
   return `<!doctype html><meta charset="utf-8"><title>Local private preview E2E</title><h1>Local private preview E2E</h1>
   <p>Synthetic identity and provider. Real control plane, gateway, React/Vite and private viewer. All listeners are loopback.</p>
   <p>Application port: <strong>${appPort}</strong>. Vite: <strong>${fixture ? 'running' : 'stopped'}</strong>.</p>
   <p><a href="/__local_preview/sign-in">Open Ephemeral with synthetic sign-in</a></p>
   ${['start', 'stop', 'edit', 'restore', 'metadata-failure', 'missing-viewer', 'delay-shells', 'end-session', 'replace-preview', 'reset', 'quit'].map(action => `<form method="post" action="/__local_preview/${action}"><button>${action}</button></form>`).join('')}
+  <h2>Synthetic terminal controls</h2>
+  <p>These controls change only the local fake provider. No VM, shell command, model, account, or cloud connection exists.</p>
+  <p><a href="/__local_preview/terminal-stats">Synthetic terminal counters and input SHA256 (no input contents)</a></p>
+  <pre>${JSON.stringify(terminalStats(), null, 2)}</pre>
+  ${['primary-exit', 'delay-next-recovery', 'release-recovery', 'delay-next-attachment', 'release-attachment', 'recovery-error-once', 'toggle-write-delay', 'terminal-reset-counters'].map(action => `<form method="post" action="/__local_preview/${action}"><button>Synthetic: ${action}</button></form>`).join('')}
+  <p>Primary-exit marks the fake primary closed and invokes its real onExit subscription. Delay-next controls arm one recovery or attachment; release controls complete the pending operation. Toggle-write-delay switches each synthetic provider write between 0 and 100ms. Return to the workspace terminal to use its real Recover shell and Reconnect actions. Reset counters before a paste to compare input bytes and SHA256 without storing its text.</p>
   <p>Start is explicit. Enable the displayed port in Ephemeral, check, prepare access, and use its native Open action.
   For isolation proof, retain the first viewer tab, use replace-preview, and open another private preview. On the retained tab, Check retained page access must report HTTP 401. Reset creates a new machine for the same check. Each new opening uses a different hostname. Edit updates the Vite heading; restore reverts it. Reset stops Vite and creates a fresh disabled session. Quit cleans up.</p>`;
 }
@@ -133,6 +204,7 @@ async function localControl(request: IncomingMessage, response: http.ServerRespo
     response.setHeader('Set-Cookie', `${ownerCookie}; Path=/; HttpOnly; SameSite=Lax`);
     response.writeHead(303, { Location: workspacePath() }); response.end(); return;
   }
+  if (request.method === 'GET' && path === '/__local_preview/terminal-stats') { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(terminalStats())); return; }
   if (request.method === 'GET' && path === '/__local_preview') { response.setHeader('Content-Type', 'text/html; charset=utf-8'); response.end(controls()); return; }
   if (request.method !== 'POST' || request.headers.origin !== api || !['same-origin', 'none', undefined].includes(request.headers['sec-fetch-site'] as string | undefined)) {
     response.writeHead(403); response.end(); return;
@@ -140,6 +212,14 @@ async function localControl(request: IncomingMessage, response: http.ServerRespo
   request.resume();
   try {
     switch (path) {
+      case '/__local_preview/primary-exit': local.terminal.primaryOpen = false; for (const listener of [...local.terminal.exits]) listener(); break;
+      case '/__local_preview/delay-next-recovery': local.terminal.nextRecoveryDelayed = true; break;
+      case '/__local_preview/release-recovery': for (const release of local.terminal.recoveryWaiting.splice(0)) release(); break;
+      case '/__local_preview/delay-next-attachment': local.terminal.nextAttachmentDelayed = true; break;
+      case '/__local_preview/release-attachment': for (const release of local.terminal.attachmentWaiting.splice(0)) release(); break;
+      case '/__local_preview/recovery-error-once': local.terminal.failNextRecovery = true; break;
+      case '/__local_preview/toggle-write-delay': local.terminal.writeDelayMs = local.terminal.writeDelayMs ? 0 : 100; break;
+      case '/__local_preview/terminal-reset-counters': local.terminal.resetInput?.(); break;
       case '/__local_preview/start': await startFixture(); break;
       case '/__local_preview/stop': await stopFixture(); break;
       case '/__local_preview/edit': await editFixture(true); break;
@@ -253,6 +333,8 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  for (const release of local.terminal.recoveryWaiting.splice(0)) release();
+  for (const release of local.terminal.attachmentWaiting.splice(0)) release();
   for (const client of clients) client.terminate();
   await stopFixture(); await viewer?.close(); await application?.close();
   for (const socket of ingressSockets) socket.destroy();
@@ -335,6 +417,59 @@ it('crosses real readiness, application assets, Vite HMR and grant revocation bo
   expect((await viewerRequest(firstOrigin, '/', { headers: { Cookie: endedCookie } })).status).toBe(401);
   await stopFixture(); await editFixture(false); await resetSession();
 }, 30_000);
+
+it('exercises synthetic primary exit, explicit delayed recovery and ready, and ACK-controlled Unicode paste through the real application', async () => {
+  const action = async (name: string) => expect((await nativeFetch(`${api}/__local_preview/${name}`, { method: 'POST', headers: { Origin: api }, redirect: 'manual' })).status).toBe(303);
+  const stats = () => nativeFetch(`${api}/__local_preview/terminal-stats`).then(response => response.json());
+  const shells = (suffix = '', body?: object) => nativeFetch(`${api}/api/sessions/${session.id}/shells${suffix}`, { method: body ? 'POST' : 'GET',
+    headers: { Cookie: ownerCookie, Origin: api, 'X-Ephemeral-Request': '1', 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const states: TerminalState[] = [];
+  const ready = vi.fn();
+  const attachment = new TerminalAttachment(() => {
+    const socket = new WebSocket(`${api.replace('http:', 'ws:')}/api/sessions/${session.id}/terminal`, { headers: { Cookie: ownerCookie, Origin: api } });
+    socket.on('error', () => {}); clients.add(socket);
+    return socket as unknown as globalThis.WebSocket;
+  }, state => states.push(state), () => {}, ready);
+  try {
+    attachment.connect();
+    await vi.waitFor(() => expect(states.at(-1)?.phase).toBe('connected'));
+    expect(ready).toHaveBeenCalledTimes(1);
+    await action('primary-exit');
+    await vi.waitFor(() => expect(states.at(-1)?.phase).toBe('disconnected'));
+    expect(attachment.input('must not run')).toBe(false);
+    expect(await shells().then(response => response.json())).toMatchObject({ shells: expect.arrayContaining([expect.objectContaining({ id: 'codex', state: 'closed' })]) });
+    await action('recovery-error-once');
+    expect((await shells('/codex/recover', {})).status).toBe(409);
+    expect((await stats()).primaryOpen).toBe(false);
+    await action('delay-next-recovery'); await action('delay-next-attachment');
+    const recovery = shells('/codex/recover', {});
+    await vi.waitFor(async () => expect((await stats()).recoveryWaiting).toBe(1));
+    expect(states.at(-1)?.phase).toBe('disconnected');
+    await action('release-recovery');
+    const recovered = await recovery; expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toMatchObject({ shells: expect.arrayContaining([expect.objectContaining({ id: 'codex', state: 'open' })]) });
+    attachment.connect(true);
+    await vi.waitFor(async () => expect((await stats()).attachmentWaiting).toBe(1));
+    expect(states.at(-1)?.phase).toBe('attaching');
+    expect(attachment.input('not ready yet')).toBe(false);
+    expect(ready).toHaveBeenCalledTimes(1);
+    await action('release-attachment');
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(2));
+    expect(states.at(-1)?.phase).toBe('connected');
+    await action('terminal-reset-counters'); await action('toggle-write-delay');
+    const paste = '\x1b[200~' + '🙂漢字é'.repeat(9000) + '\x1b[201~';
+    expect(attachment.input(paste)).toBe(true);
+    await vi.waitFor(async () => expect(await stats()).toMatchObject({ synthetic: true, inputBytes: Buffer.byteLength(paste), inputSha256: createHash('sha256').update(paste).digest('hex') }), { timeout: 5000 });
+    expect((await stats()).writes).toBeGreaterThan(1);
+    expect(states.at(-1)?.phase).toBe('connected');
+    const recoveries = (await stats()).recoveries;
+    expect((await shells('/codex/recover', {})).status).toBe(200);
+    expect((await stats()).recoveries).toBe(recoveries);
+    expect((await stats()).recoveryWaiting).toBe(0);
+  } finally { attachment.dispose(); await resetSession(); }
+  expect(await stats()).toMatchObject({ primaryOpen: true, writeDelayMs: 0, recoveryWaiting: 0, attachmentWaiting: 0,
+    nextRecoveryDelayed: false, nextAttachmentDelayed: false, failNextRecovery: false, inputBytes: 0, writes: 0, recoveries: 0, recoveryCalls: 0, attachments: 0, activeAttachments: 0 });
+}, 15_000);
 
 it.skipIf(!browserMode)('keeps the explicit local browser harness available for up to fifteen minutes', async () => {
   console.log(`\nLocal Preview E2E controls: ${api}/__local_preview\nSynthetic sign-in: ${api}/__local_preview/sign-in\nApplication port: ${appPort}\nUse the controls to start Vite explicitly. No account, provider, or OAuth credentials are used.\n`);

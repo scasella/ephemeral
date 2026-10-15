@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from '../server/app.js';
+import { createLiveApplication } from './helpers/create-live-application.js';
 import { readConfig } from '../server/config.js';
 import { digest, seal } from '../server/auth/crypto.js';
 import type { Session } from '../server/contracts.js';
@@ -25,7 +26,7 @@ describe('handoff note owner API', () => {
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'ep-note-http-'));
     const config = readConfig({ EPHEMERAL_MODE: 'preview', DATA_DIR: directory, PUBLIC_URL: 'http://localhost:4329', ENCRYPTION_KEY: key, ALLOWED_GITHUB_IDS: '42,99' });
-    application = await createApplication({ ...config, mode: 'live' });
+    application = await createLiveApplication({ ...config, mode: 'live' });
     await new Promise<void>(resolve => application.server.listen(0, '127.0.0.1', resolve));
     const address = application.server.address(); if (!address || typeof address === 'string') throw new Error('No server address');
     origin = `http://127.0.0.1:${address.port}`;
@@ -101,7 +102,7 @@ describe('handoff note owner API', () => {
       const session = await fetch(`${origin}/api/sessions/${source.id}`, { headers }).then(r => r.json());
       expect(JSON.stringify(session)).not.toContain(fields.nextStep);
       expect(JSON.stringify(await fetch(`${origin}/api/sessions`, { headers }).then(r => r.json()))).not.toContain(fields.nextStep);
-      expect(await fetch(`${origin}/api/sessions/${source.id}/events`, { headers }).then(r => r.json())).toEqual([]);
+      expect(await fetch(`${origin}/api/sessions/${source.id}/events`, { headers }).then(r => r.json())).toEqual({ events: [], nextCursor: null });
       await application.repo.update({ ...source, state: 'ended', sandboxId: null });
       expect((await get(source.id).then(r => r.json())).note).toMatchObject({ revision: 1, ...fields });
     }

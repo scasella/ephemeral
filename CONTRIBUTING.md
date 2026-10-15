@@ -4,7 +4,7 @@ GitHub publication is pending. The `package.json` repository URL records the int
 
 ## Local setup
 
-Use Node.js 24 LTS, npm, Git, and `openssl` for the local private-preview tests. Install `tmux` and `ps` (`procps` on Linux) for both real shell-containment tests; those two checks skip explicitly if tmux is absent. CI installs the tools. If running the suite in Docker, use `--init` so orphaned fixture processes are reaped. The package supports Node 24; `.nvmrc` and `.node-version` select that major for compatible version managers. With nvm, run `nvm install` and `nvm use` first. Confirm `node --version` reports v24 before installing dependencies. From the repository root:
+Use Node.js 24 LTS, npm, Git, Python 3, and `openssl` for local tests. Workspace-change inspection tests invoke `python3` directly; confirm that command is available before running the suite. Install `tmux` and `ps` (`procps` on Linux) for both real shell-containment tests; those two checks skip explicitly if tmux is absent. CI installs the tools, including `setsid` from `util-linux` on Linux, and launches the suite with `setsid --wait npm run test:ci` to give containment fixtures an ordinary process group. If running the suite in Docker, use `--init` so orphaned fixture processes are reaped, and run `setsid --wait npm run test:ci` inside the container. The package supports Node 24; `.nvmrc` and `.node-version` select that major for compatible version managers. With nvm, run `nvm install` and `nvm use` first. Confirm `node --version` reports v24 before installing dependencies. From the repository root:
 
 ```sh
 npm ci
@@ -31,7 +31,7 @@ npm run audit:dependencies
 npm run check:secrets
 ```
 
-`test:ci` limits Vitest to two workers. `build` runs TypeScript checking and the Vite build. The dependency audit checks both application and development dependencies against npm's current advisory service and fails on high or critical advisories; it requires network access. Registry failure is an incomplete audit, not a clean result. Do not run `npm audit fix --force` without reviewing dependency and compatibility changes.
+`test` and `test:ci` enforce Node 24, start Vitest with an allowlisted environment and disposable home, and prevent repository `.env` loading. Direct Vitest runs also use a setup hook that clears integration settings before server imports. Dedicated configuration subprocess tests explicitly opt back into dotenv using synthetic temporary files. `test:ci` limits Vitest to two workers. PGlite, local Git, HTTP and process integration files receive 30-second test/hook budgets; pure unit tests keep the default budget. No automatic test retries hide assertion failures. `build` runs TypeScript checking and the Vite build. The dependency audit checks both application and development dependencies against npm's current advisory service and fails on high or critical advisories; it requires network access. Registry failure is an incomplete audit, not a clean result. Do not run `npm audit fix --force` without reviewing dependency and compatibility changes.
 
 `check:secrets` requires an already-installed Gitleaks 8.30.1 on `PATH`, or an explicit `GITLEAKS_BIN` executable path. It downloads nothing. It scans all Git history and a temporary copy of tracked and non-ignored untracked files, then deletes the copy. Ignored local operational files stay outside the working-file scan; accidentally tracked files remain in scope. Shallow clones and non-regular candidate files fail for separate review. Output is fully redacted, and no findings report is saved or uploaded. Pattern scanning is one check, not proof that a release contains no sensitive data. CI installs a pinned, checksum-verified CLI for this check.
 
@@ -52,9 +52,11 @@ To check the packaged runtime with a local Docker daemon:
 ```sh
 docker build --tag ephemeral:release-candidate .
 npm run test:container
+# Check context filtering alone, without building the application image:
+npm run test:container:context
 ```
 
-The runner does not load `.env` or require host `node_modules`. It checks privilege drop, disk permissions and persistence, startup safeguards, built assets and authentication fences, real PostgreSQL migrations/locking, restart and SIGTERM. It pulls the Compose PostgreSQL image if needed and uses generated test configuration, disposable volumes, an internal Docker network, and no published host ports. It removes test resources and leaves images cached. See [the local container report](docs/VALIDATION.md). CI runs the same suite without publishing images or deploying resources; an actual GitHub CI run remains pending publication. This is local runtime evidence, not a real E2B/GitHub or hosted acceptance test.
+The Docker build context uses an allowlist of build inputs and excludes private configuration and data directories at every depth. The container test first exports a synthetic context with Docker and verifies that nested private files cannot enter builder layers, then checks the packaged runtime. The runner does not load `.env` or require host `node_modules`. It checks privilege drop, disk permissions and persistence, startup safeguards, built assets and authentication fences, real PostgreSQL migrations/locking, restart and SIGTERM. It pulls the Compose PostgreSQL image if needed and uses generated test configuration, disposable volumes, an internal Docker network, and no published host ports. It removes test resources and leaves images cached. See [the local container report](docs/VALIDATION.md). CI runs the same suite without publishing images or deploying resources; an actual GitHub CI run remains pending publication. This is local runtime evidence, not a real E2B/GitHub or hosted acceptance test.
 
 ## Scope and review
 

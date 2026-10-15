@@ -18,11 +18,24 @@ export function shellCommand(shellId: string, action: 'ensure' | 'inspect' | 'cl
 }
 
 export function shellCommandSource(target: string, action: 'ensure' | 'inspect' | 'close'): string {
+  return lifecycleSource(target, action);
+}
+
+/** Explicit recovery never kills a living pane and never replays startup/login commands. */
+export function recoverPrimaryShellCommand(): string {
+  return `node -e ${shellQuote(recoverPrimaryShellCommandSource())}`;
+}
+
+export function recoverPrimaryShellCommandSource(): string {
+  return lifecycleSource('ephemeral', 'recover');
+}
+
+function lifecycleSource(target: string, action: 'ensure' | 'inspect' | 'close' | 'recover'): string {
   // Also validate this internal entry point so callers cannot bypass shell ID validation.
   if (target !== 'ephemeral') {
     if (!target.startsWith('ephemeral-shell-') || shellTarget(target.slice('ephemeral-shell-'.length)) !== target) throw new Error('Invalid terminal target.');
   }
-  if (target === 'ephemeral' && action !== 'inspect') throw new Error('The Codex terminal is protected.');
+  if (target === 'ephemeral' && action !== 'inspect' && action !== 'recover') throw new Error('The Codex terminal is protected.');
   return `
 const {spawnSync} = require('node:child_process');
 const fs = require('node:fs');
@@ -69,11 +82,23 @@ const run = args => {
 };
 const names = () => {
   const result = run(['list-sessions', '-F', '#{session_name}']);
-  if (result.status !== 0) throw new Error('Terminal server unavailable');
+  if (result.status !== 0) {
+    // tmux's status alone also describes permission errors and broken sockets.
+    // Only its explicit absence diagnostics establish that no server exists.
+    if (result.status === 1 && /^\\s*(?:no server running on [^\\r\\n]+|error connecting to [^\\r\\n]+ \\(No such file or directory\\)|no sessions)\\s*$/.test(result.stderr)) return [];
+    throw new Error('Terminal server unavailable');
+  }
   return result.stdout.trim().split('\\n');
 };
 const exists = () => names().includes(target);
 const complete = state => process.stdout.write(JSON.stringify({state}) + ${JSON.stringify(SHELL_FRAME)});
+const paneStates = () => {
+  const result = run(['list-panes', '-s', '-t', '=' + target, '-F', '#{pane_id} #{pane_dead}']);
+  if (result.status !== 0) throw new Error('Terminal panes unavailable');
+  const rows = result.stdout.trim().split('\\n').map(line => line.trim().split(' '));
+  if (!rows.length || rows.some(([id, dead]) => !/^%\\d+$/.test(id) || !['0', '1'].includes(dead))) throw new Error('Invalid terminal panes');
+  return rows;
+};
 const panes = name => {
   const result = run(['list-panes', '-s', '-t', '=' + name, '-F', '#{pane_pid}']);
   if (result.status !== 0) throw new Error('Terminal panes unavailable');
@@ -93,6 +118,19 @@ const processes = () => {
 };
 (async () => {
   if (action !== 'inspect') await acquire();
+  if (action === 'recover') {
+    if (exists()) {
+      const states = paneStates();
+      if (states.some(([, dead]) => dead === '0')) { complete('open'); return; }
+      // Omitting -k makes tmux itself refuse a respawn if a pane became live.
+      if (run(['respawn-pane', '-t', states[0][0], '-c', '/home/user/workspace', 'bash -l']).status !== 0) throw new Error('Terminal recovery failed');
+    } else {
+      // Start only a fresh login shell; credentials and workspace stay in place.
+      if (run(['new-session', '-d', '-s', target, '-c', '/home/user/workspace', 'bash -l']).status !== 0) throw new Error('Terminal recovery failed');
+    }
+    if (run(['set-option', '-w', '-t', '=' + target + ':', 'remain-on-exit', 'on']).status !== 0) throw new Error('Terminal retention failed');
+    complete(paneStates().some(([, dead]) => dead === '0') ? 'open' : 'closed'); return;
+  }
   if (action === 'close') fs.writeFileSync(tombstone, 'closed', {mode:0o600});
   if (action === 'ensure') {
     if (fs.existsSync(tombstone)) throw new Error('Terminal generation is closed');
@@ -104,7 +142,7 @@ const processes = () => {
     complete('open'); return;
   }
   if (!exists()) { complete('closed'); return; }
-  if (action === 'inspect') { complete('open'); return; }
+  if (action === 'inspect') { complete(paneStates().some(([, dead]) => dead === '0') ? 'open' : 'closed'); return; }
   const roots = new Set(panes(target));
   const initial = processes();
   const own = initial.find(row => row.pid === process.pid);

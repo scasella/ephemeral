@@ -4,8 +4,13 @@ import { PGlite } from '@electric-sql/pglite';
 import { createSessionRepository } from '../server/core/repository.js';
 import { createShellController, createShellRepository } from '../server/shells.js';
 import { PreviewProvider } from '../server/preview.js';
-import type { Database, Session } from '../server/contracts.js';
+import type { Database, SandboxProvider, Session } from '../server/contracts.js';
 
+const deferred = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
+};
 const session = (): Session => {
   const id = randomUUID(), now = new Date().toISOString();
   return { id, userId: id, repository: 'owner/repo', repositoryId: 1, installationId: 1, baseBranch: 'main', branch: `ephemeral/${id}`,
@@ -106,5 +111,80 @@ describe('durable supplemental shells', () => {
     for (const name of ['', '\nShell', 'x'.repeat(81)]) await expect(shells.create(s, randomUUID(), name)).rejects.toMatchObject({ status: 400 });
     await repo.update({ ...s, expiresAt: new Date(Date.now()-100).toISOString() });
     await expect(shells.create(s, randomUUID(), 'Expired')).rejects.toMatchObject({ status: 409 }); expect((await shells.list(s)).canCreate).toBe(false);
+  });
+  it('observes primary exit and recovers only a confirmed closed shell through an explicit action', async () => {
+    const s = await saved(), recover = vi.fn<NonNullable<SandboxProvider['recoverPrimaryShell']>>().mockResolvedValue('open');
+    (provider as SandboxProvider).recoverPrimaryShell = recover;
+    inspect.mockResolvedValue('closed');
+    expect((await shells.list(s)).shells[0].state).toBe('closed'); expect(recover).not.toHaveBeenCalled();
+    inspect.mockImplementation(async (_s, id) => id === 'codex' && !recover.mock.calls.length ? 'closed' : 'open');
+    expect((await shells.recoverPrimary(s)).shells[0].state).toBe('open'); expect(recover).toHaveBeenCalledTimes(1);
+    await shells.recoverPrimary(s); expect(recover).toHaveBeenCalledTimes(1);
+    inspect.mockResolvedValue('unknown');
+    expect((await shells.list(s)).shells[0].state).toBe('uncertain');
+    await expect(shells.recoverPrimary(s)).rejects.toMatchObject({ status: 409 }); expect(recover).toHaveBeenCalledTimes(1);
+    await expect(shells.closeShell(s, 'codex')).rejects.toMatchObject({ status: 409 }); expect(close).not.toHaveBeenCalled();
+  });
+  it('allows another session to proceed while one VM is slow and drains every active queue on shutdown', async () => {
+    const a = await saved(), b = await saved();
+    let releaseA!: () => void, releaseB!: () => void;
+    const enteredA = deferred(), enteredB = deferred();
+    ensure.mockImplementation(async s => {
+      if (s.id === a.id) { enteredA.resolve(); await new Promise<void>(resolve => { releaseA = resolve; }); }
+      else { enteredB.resolve(); await new Promise<void>(resolve => { releaseB = resolve; }); }
+      return 'open';
+    });
+    const first = shells.create(a, randomUUID(), 'Slow A'); await enteredA.promise;
+    const second = shells.create(b, randomUUID(), 'Slow B'); await enteredB.promise;
+    let drained = false; const shutdown = shells.close().then(() => { drained = true; });
+    await expect(shells.list(a)).rejects.toMatchObject({ status: 409 });
+    releaseA(); await first; await Promise.resolve(); expect(drained).toBe(false);
+    releaseB(); await second; await shutdown; expect(drained).toBe(true);
+  });
+  it('bounds per-session admission without consuming every slot and freezes queued work on shutdown', async () => {
+    const a = await saved(), b = await saved(), entered = deferred(), release = deferred();
+    ensure.mockImplementationOnce(async () => { entered.resolve(); await release.promise; return 'open'; });
+    const creating = shells.create(a, randomUUID(), 'Blocked'); await entered.promise;
+    const queued = Array.from({ length: 7 }, () => shells.list(a));
+    const outcomes = queued.map(task => task.catch(error => error));
+    await expect(shells.list(a)).rejects.toMatchObject({ status: 429 });
+    expect((await shells.list(b)).shells[0].state).toBe('open');
+    const shutdown = shells.close(); release.resolve(); await creating;
+    expect((await Promise.all(outcomes)).every(value => value.status === 409)).toBe(true); await shutdown;
+  });
+  it('bounds total admitted operations across independent session queues', async () => {
+    const values = await Promise.all(Array.from({ length: 5 }, saved)), entered = deferred(), release = deferred();
+    let started = 0;
+    ensure.mockImplementation(async () => { if (++started === 4) entered.resolve(); await release.promise; return 'open'; });
+    const creating = values.slice(0, 4).map(s => shells.create(s, randomUUID(), 'Concurrent'));
+    await entered.promise;
+    const queued = values.slice(0, 4).flatMap(s => Array.from({ length: 7 }, () => shells.list(s)));
+    await expect(shells.list(values[4])).rejects.toMatchObject({ status: 429 });
+    release.resolve(); await Promise.all([...creating, ...queued]);
+    expect((await shells.list(values[4])).shells[0].state).toBe('open');
+  });
+  it('serializes overlapping primary recoveries and supplemental creation for one session', async () => {
+    const s = await saved(), entered = deferred(), release = deferred();
+    let primary: 'open' | 'closed' = 'closed';
+    inspect.mockImplementation(async (_s, id) => id === 'codex' ? primary : 'open');
+    const recover = vi.fn(async () => { entered.resolve(); await release.promise; primary = 'open'; return primary; });
+    (provider as SandboxProvider).recoverPrimaryShell = recover;
+    const first = shells.recoverPrimary(s); await entered.promise;
+    const second = shells.recoverPrimary(s), supplemental = shells.create(s, randomUUID(), 'After recovery');
+    expect(ensure).not.toHaveBeenCalled(); release.resolve();
+    await Promise.all([first, second, supplemental]); expect(recover).toHaveBeenCalledTimes(1); expect(ensure).toHaveBeenCalledTimes(1);
+  });
+  it('rechecks running state, expiry and authorization after a slow primary inspection before recovery', async () => {
+    for (const change of ['stop', 'expire', 'revoke'] as const) {
+      const s = await saved(), entered = deferred(), release = deferred();
+      const recover = vi.fn<NonNullable<SandboxProvider['recoverPrimaryShell']>>().mockResolvedValue('open');
+      (provider as SandboxProvider).recoverPrimaryShell = recover;
+      inspect.mockImplementationOnce(async () => { entered.resolve(); await release.promise; return 'closed'; });
+      const recovery = shells.recoverPrimary(s); const outcome = recovery.catch(error => error); await entered.promise;
+      if (change === 'stop') await repo.update({ ...s, state: 'cleanup_pending' });
+      else if (change === 'expire') await repo.update({ ...s, expiresAt: new Date(Date.now() - 100).toISOString() });
+      else authorize.mockRejectedValueOnce(new Error('Access revoked during inspection'));
+      release.resolve(); expect(await outcome).toBeInstanceOf(Error); expect(recover).not.toHaveBeenCalled();
+    }
   });
 });

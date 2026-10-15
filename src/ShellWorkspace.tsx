@@ -3,6 +3,7 @@ import type { TerminalProps } from './Terminal';
 import { ShellWorkspaceClient, SHELL_NAME_ERROR, mountedShells, parsePendingShellOperation, reconcileShellSelection, shellNameValue, type ShellOperation, type ShellWorkspaceState, type WorkspaceShell } from './shell-workspace';
 import { focusWorkspaceTarget, restoreWorkspaceFocus } from './workspace-navigation';
 import { previewShellDestination, type PreviewShellNavigationRequest } from './preview-shell-navigation';
+import { SHELL_NAME_MAX_CHARACTERS } from '../shared/shell-name';
 import './shell-workspace.css';
 const Terminal = lazy(() => import('./Terminal'));
 const INITIAL: ShellWorkspaceState = { snapshot: null, pending: null, loading: true, sending: false, error: '' };
@@ -64,7 +65,8 @@ export function ShellWorkspace(props: TerminalProps & { navigationRequest?: Prev
   useEffect(() => { if (!visible) setEditor(null); }, [visible]);
   const supplemental = mountedShells(state.snapshot);
   for (const shell of supplemental) if (shell.state === 'open') attachedShells.current.add(shell.id);
-  const shells: Pick<WorkspaceShell, 'id' | 'name' | 'state'>[] = [{ id: 'codex', name: 'Codex', state: 'open' }, ...supplemental];
+  const primary = state.snapshot?.shells.find(shell => shell.id === 'codex');
+  const shells: Pick<WorkspaceShell, 'id' | 'name' | 'state'>[] = [{ id: 'codex', name: 'Codex', state: primary?.state || 'open' }, ...supplemental];
   const current = supplemental.find(shell => shell.id === selected);
   const blocked = state.sending || Boolean(state.pending) || state.loading;
   useLayoutEffect(() => {
@@ -104,7 +106,7 @@ export function ShellWorkspace(props: TerminalProps & { navigationRequest?: Prev
         const next = event.key === 'ArrowRight' ? shells[(index + 1) % shells.length] : event.key === 'ArrowLeft' ? shells[(index + shells.length - 1) % shells.length] : event.key === 'Home' ? shells[0] : event.key === 'End' ? shells.at(-1) : undefined;
         if (next) { event.preventDefault(); setSelected(next.id); document.getElementById(`${scope}-tab-${next.id}`)?.focus(); }
       }}>
-        {shells.map(shell => <button key={shell.id} ref={shell.id === selected ? selectedTab : undefined} id={`${scope}-tab-${shell.id}`} type="button" role="tab" aria-selected={selected === shell.id} aria-controls={`${scope}-panel-${shell.id}`} tabIndex={selected === shell.id ? 0 : -1} className={selected === shell.id ? 'active' : ''} onClick={() => setSelected(shell.id)} title={shell.id === 'codex' ? 'Protected primary Codex terminal' : shell.name}>{shell.name}{shell.id !== 'codex' && shell.state !== 'open' && <span> · {shell.state}</span>}</button>)}
+        {shells.map(shell => <button key={shell.id} ref={shell.id === selected ? selectedTab : undefined} id={`${scope}-tab-${shell.id}`} type="button" role="tab" aria-selected={selected === shell.id} aria-controls={`${scope}-panel-${shell.id}`} tabIndex={selected === shell.id ? 0 : -1} className={selected === shell.id ? 'active' : ''} onClick={() => setSelected(shell.id)} title={shell.id === 'codex' ? 'Protected primary Codex terminal' : shell.name}>{shell.name}{shell.state !== 'open' && <span> · {shell.state}</span>}</button>)}
       </div>
       <div className="shell-actions">
         <button id={`${scope}-refresh-shells`} type="button" disabled={state.sending || state.loading} onClick={() => { void client.current?.refresh(); }}>Refresh saved shells</button>
@@ -118,7 +120,7 @@ export function ShellWorkspace(props: TerminalProps & { navigationRequest?: Prev
     {state.pending && <p role="status" className="shell-message">{state.sending ? state.pending.kind === 'close' ? 'Closing shell…' : state.pending.kind === 'create' ? 'Opening shell…' : 'Saving shell name…' : 'The shell request has not been confirmed. Saved shell state will be checked before another operation.'}</p>}
     {state.pending && !state.sending && <div className="shell-recovery"><button type="button" disabled={state.loading} onClick={() => { if (state.pending && (state.pending.kind !== 'close' || window.confirm('Retry closing this shell? Commands running in it will stop. Codex stays open. The machine and its expiration stay the same.'))) void client.current?.perform(state.pending); }}>Retry same request</button></div>}
     {shells.map(shell => <div key={shell.id} role="tabpanel" id={`${scope}-panel-${shell.id}`} aria-labelledby={`${scope}-tab-${shell.id}`} hidden={selected !== shell.id}>
-      {attachedShells.current.has(shell.id) && <Suspense fallback={<div className="terminal-placeholder"><p>Connecting {shell.name} terminal…</p></div>}><Terminal {...props} shellId={shell.id} label={shell.name} visible={visible && selected === shell.id && shell.state === 'open'} onStatusChange={shell.id === 'codex' ? props.onStatusChange : undefined}/></Suspense>}
+      {attachedShells.current.has(shell.id) && <Suspense fallback={<div className="terminal-placeholder"><p>Connecting {shell.name} terminal…</p></div>}><Terminal {...props} shellId={shell.id} label={shell.name} visible={visible && selected === shell.id && (shell.id === 'codex' || shell.state === 'open')} onStatusChange={shell.id === 'codex' ? phase => { props.onStatusChange?.(phase); if (phase === 'connected') void client.current?.refresh(); } : undefined} onRecoverShell={shell.id === 'codex' ? async () => { const controller = client.current; const recovered = await controller?.recoverPrimary(); return Boolean(recovered && client.current === controller); } : undefined} recoveringShell={shell.id === 'codex' && Boolean(state.recoveringPrimary)} unavailableReason={shell.id === 'codex' && primary && primary.state !== 'open' ? `The saved primary shell is ${primary.state}. Reconnect to check its state, or select Recover shell to recover a stopped shell on this machine.` : undefined}/></Suspense>}
       {shell.id !== 'codex' && shell.state !== 'open' && <p className="shell-message" role="status">{shell.name} is {shell.state}. {supplemental.find(item => item.id === shell.id)?.error || 'Refresh saved shells to confirm its state before typing.'}</p>}
     </div>)}
     <details className="shell-details">
@@ -129,7 +131,7 @@ export function ShellWorkspace(props: TerminalProps & { navigationRequest?: Prev
       <h2 id={`${scope}-dialog-title`}>{editor === 'close' ? `Close ${current?.name || 'shell'}?` : editor === 'create' ? 'Open a shell' : 'Rename shell'}</h2>
       <p id={`${scope}-dialog-help`}>{editor === 'close' ? 'Closing this shell stops commands running in it. Codex stays open. The machine and its expiration stay the same.' : editor === 'create' ? props.preview ? 'Simulate an additional shell. No compute or commands are started.' : 'Start a persistent bash shell on this machine. Its expiration stays the same.' : 'Give this shell an ordinary name. Do not include credentials.'}</p>
       <form onSubmit={event => { event.preventDefault(); void submit(); }}>
-        {editor !== 'close' && <><label htmlFor={`${scope}-name`}>Shell name</label><input id={`${scope}-name`} value={draft} maxLength={80} autoFocus required onChange={event => { setDraftError(''); setDraft(event.target.value); }} aria-invalid={Boolean(draftError)} aria-describedby={`${scope}-name-help${draftError ? ` ${scope}-name-error` : ''}`}/><p id={`${scope}-name-help`} className="form-help">Up to 80 characters. Use an ordinary name; do not include credentials.</p>{draftError && <p id={`${scope}-name-error`} className="form-error" role="alert">{draftError}</p>}</>}
+        {editor !== 'close' && <><label htmlFor={`${scope}-name`}>Shell name</label><input id={`${scope}-name`} value={draft} autoFocus required onChange={event => { setDraftError(''); setDraft(event.target.value); }} aria-invalid={Boolean(draftError)} aria-describedby={`${scope}-name-help${draftError ? ` ${scope}-name-error` : ''}`}/><p id={`${scope}-name-help`} className="form-help">Up to {SHELL_NAME_MAX_CHARACTERS} Unicode characters. Use an ordinary name; do not include credentials.</p>{draftError && <p id={`${scope}-name-error`} className="form-error" role="alert">{draftError}</p>}</>}
         <div className="modal-actions"><button type="button" className="button subtle" autoFocus={editor === 'close'} onClick={() => setEditor(null)}>Cancel</button><button className="button primary" disabled={(editor === 'close' ? !canClose : blocked) || (editor !== 'close' && !draft.trim())}>{editor === 'close' ? 'Close shell and stop commands' : editor === 'create' ? props.preview ? 'Open preview shell' : 'Open shell' : 'Save name'}</button></div>
       </form>
     </dialog>}

@@ -24,6 +24,7 @@ async function storage() {
   const db = new PGlite(); cleanups.push(() => db.close());
   const api = new GitHubAPI('42', 'not-needed', 'ephemeral');
   vi.spyOn(api, 'installationToken').mockResolvedValue({ token: 'SECRET-UPSTREAM-TOKEN', expires_at: new Date(Date.now() + 3600000).toISOString() });
+  vi.spyOn(api, 'prepareInstallationToken').mockImplementation(s => () => api.installationToken(s));
   vi.spyOn(api, 'revoke').mockResolvedValue(undefined);
   const store = new CredentialStore(db as unknown as Database, key, api); await store.migrate();
   return { db, api, store };
@@ -42,7 +43,7 @@ async function listen(server: Server): Promise<string> {
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('Expected TCP address');
   return `http://127.0.0.1:${address.port}`;
 }
-async function fixture() {
+async function fixture(clone = true) {
   const directory = await mkdtemp(join(tmpdir(), 'ep-gh-test-')); cleanups.push(() => rm(directory, { recursive: true, force: true }));
   const upstream = join(directory, 'upstream.git'), seed = join(directory, 'seed');
   await ok(['init', '--bare', upstream]); await ok(['--git-dir', upstream, 'config', 'http.receivepack', 'true']);
@@ -71,17 +72,22 @@ async function fixture() {
   const upstreamURL = await listen(upstreamServer);
   const { store, api, db } = await storage();
   let current = session(); const authorize = vi.fn(async () => undefined);
-  const gateway = new GitGateway(store, { getSession: async () => current, authorizeSession: authorize }); await gateway.start(); cleanups.push(() => gateway.close());
-  // Replace only upstream location inside the server-owned environment; all production Git mechanics and hooks run unchanged.
-  type WithAuth = { withAuth<T>(s: Session, token: string, action: (env: NodeJS.ProcessEnv) => Promise<T>): Promise<T> };
-  const subject = gateway as unknown as WithAuth; const original = subject.withAuth.bind(gateway);
-  vi.spyOn(subject, 'withAuth').mockImplementation((s, token, action) => original(s, token, env => action({ ...env, EP_UPSTREAM: `${upstreamURL}/upstream.git` })));
-  const app = express(); app.use('/gateway', gateway.router); const url = await listen(createServer(app));
+  const startGateway = async () => {
+    const next = new GitGateway(store, { getSession: async () => current, authorizeSession: authorize }); await next.start(); cleanups.push(() => next.close());
+    // Replace only upstream location; production Git mechanics and hooks run unchanged.
+    type WithAuth = { withAuth<T>(s: Session, token: string, action: (env: NodeJS.ProcessEnv) => Promise<T>): Promise<T> };
+    const subject = next as unknown as WithAuth; const original = subject.withAuth.bind(next);
+    vi.spyOn(subject, 'withAuth').mockImplementation((s, token, action) => original(s, token, env => action({ ...env, EP_UPSTREAM: `${upstreamURL}/upstream.git` })));
+    return next;
+  };
+  let gateway = await startGateway();
+  const app = express(); app.use('/gateway', (req, res, next) => gateway.router(req, res, next)); const url = await listen(createServer(app));
   const capability = await store.issue(current), authorization = `Authorization: Basic ${Buffer.from(`x-access-token:${capability}`).toString('base64')}`;
   const work = join(directory, 'work'); const remote = `${url}/gateway/git/${current.id}.git`;
-  await ok(['-c', `http.extraHeader=${authorization}`, 'clone', remote, work]);
+  await ok(['-c', `http.extraHeader=${authorization}`, 'clone', clone ? remote : upstream, work]);
+  if (!clone) await ok(['-C', work, 'remote', 'set-url', 'origin', remote]);
   await ok(['-C', work, 'config', 'http.extraHeader', authorization]); await ok(['-C', work, 'config', 'user.name', 'Test']); await ok(['-C', work, 'config', 'user.email', 'test@example.com']);
-  return { directory, upstream, upstreamAuthentication, work, gateway, store, api, db, remote, capability, authorize, current, setCurrent: (s: Session) => { current = s; } };
+  return { directory, upstream, upstreamAuthentication, work, get gateway() { return gateway; }, restart: async () => { await gateway.close(); gateway = await startGateway(); }, store, api, db, remote, capability, authorize, current, setCurrent: (s: Session) => { current = s; } };
 }
 
 describe('GitHub credentials and API scope', () => {
@@ -93,6 +99,19 @@ describe('GitHub credentials and API scope', () => {
     const [head, body, signature] = jwt.split('.'); expect(verify('RSA-SHA256', Buffer.from(`${head}.${body}`), publicKey, Buffer.from(signature, 'base64url'))).toBe(true);
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString()); expect(payload.exp - payload.iat).toBe(600); expect(payload.iss).toBe('42');
   });
+  it('persists one immutable anchor across competing captures and rejects changed session identities', async () => {
+    const { db, store } = await storage(), s = session(); await store.issue(s);
+    const original = 'a'.repeat(40), later = 'b'.repeat(40);
+    await expect(store.anchors.capture(s, original)).resolves.toBe(original);
+    await expect(store.anchors.capture(s, later)).resolves.toBe(original);
+    for (const changed of [{ ...s, userId: 'other' }, { ...s, createdAt: '2000-01-01T00:00:00.000Z' },
+      { ...s, repository: 'owner/other' }, { ...s, repositoryId: 4 }, { ...s, installationId: 9 },
+      { ...s, baseBranch: 'other' }, { ...s, branch: 'ephemeral/other' }]) {
+      await expect(store.anchors.get(changed)).rejects.toThrow('session identity');
+    }
+    await store.issue(s); expect(await store.anchors.get(s)).toBe(original);
+    expect((await db.query('SELECT * FROM github_clone_anchors')).rows).toHaveLength(1);
+  }, 30_000);
   it('stores only gateway hashes and encrypted upstream tokens, disables before revocation, retries failures', async () => {
     const { db, api, store } = await storage(); const s = session(), capability = await store.issue(s);
     expect(await store.enabled(s.id, capability)).toBe(true); expect(await store.enabled(s.id, 'wrong')).toBe(false);
@@ -115,6 +134,7 @@ describe('GitHub credentials and API scope', () => {
     await store.disable(s.id);
     await expect(store.revoke(s.id)).rejects.toThrow('pending');
     await db.query('UPDATE github_token_issuance SET uncertainty_until=$1', [new Date(Date.now() - 1).toISOString()]);
+    await db.query('UPDATE github_token_issuance_attempts SET expires_at=$1', [new Date(Date.now() - 1).toISOString()]);
     await expect(store.revoke(s.id)).resolves.toBeUndefined();
   });
   it('preserves issuance uncertainty when durable token storage and compensation both fail', async () => {
@@ -124,7 +144,7 @@ describe('GitHub credentials and API scope', () => {
       if (sql.startsWith('INSERT INTO github_installation_tokens')) throw new Error('database write lost');
       return query(sql, params);
     });
-    vi.mocked(api.revoke).mockRejectedValueOnce(new Error('revocation unavailable'));
+    vi.mocked(api.revoke).mockRejectedValue(new Error('revocation unavailable'));
     await expect(store.token(s)).rejects.toThrow('database write lost'); await store.disable(s.id);
     await expect(store.revoke(s.id)).rejects.toThrow('pending');
     expect((await query('SELECT * FROM github_token_issuance')).rows).toHaveLength(1);
@@ -155,7 +175,7 @@ describe('GitHub credentials and API scope', () => {
 
 describe('real Git smart HTTP gateway', () => {
   it('anchors a new continuation branch to its reviewed source after main advances while retaining ref and ancestry restrictions', async () => {
-    const f = await fixture();
+    const f = await fixture(false);
     const sourceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const sourceBranch = `ephemeral/${sourceId}`;
     const base = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
@@ -168,6 +188,7 @@ describe('real Git smart HTTP gateway', () => {
     await ok(['-C', f.work, 'push', f.upstream, 'main']);
     const advancedMain = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
     f.setCurrent({ ...f.current, continuation: { sourceSessionId: sourceId, sourceBranch, commitSha: reviewed, verifiedAt: new Date().toISOString() } });
+    await ok(['-C', f.work, 'fetch', 'origin']);
     await ok(['-C', f.work, 'checkout', '-b', f.current.branch, base]);
     const unrelated = await git(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
     expect(unrelated.code).not.toBe(0);
@@ -181,6 +202,119 @@ describe('real Git smart HTTP gateway', () => {
     expect(await ok(['--git-dir', f.upstream, 'rev-parse', f.current.branch])).toBe(continued);
     expect(await ok(['--git-dir', f.upstream, 'rev-parse', sourceBranch])).toBe(reviewed);
     expect(await ok(['--git-dir', f.upstream, 'rev-parse', 'main'])).toBe(advancedMain);
+  }, 60_000);
+
+  it('keeps the first clone anchor through base advances, deletion, credential rotation, and mirror restart while later fetch sees live main', async () => {
+    const f = await fixture();
+    const anchor = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
+    expect(await f.store.anchors.cloneComplete(f.current)).toBe(true);
+    const seed = join(f.directory, 'seed');
+    await writeFile(join(seed, 'file.txt'), 'advanced main\n'); await ok(['-C', seed, 'commit', '-am', 'advance']);
+    await ok(['-C', seed, 'push', f.upstream, 'main']);
+    const advanced = await ok(['-C', seed, 'rev-parse', 'HEAD']);
+    await ok(['-C', f.work, 'fetch', 'origin']);
+    expect(await ok(['-C', f.work, 'rev-parse', 'origin/main'])).toBe(advanced);
+    await ok(['-C', f.work, 'checkout', '-b', f.current.branch, anchor]);
+    await writeFile(join(f.work, 'file.txt'), 'session from original clone\n'); await ok(['-C', f.work, 'commit', '-am', 'session']);
+    await ok(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
+    const rotated = await f.store.issue(f.current);
+    await ok(['-C', f.work, 'config', 'http.extraHeader', `Authorization: Basic ${Buffer.from(`x-access-token:${rotated}`).toString('base64')}`]);
+    await ok(['--git-dir', f.upstream, 'update-ref', '-d', 'refs/heads/main']);
+    await f.restart();
+    await ok(['-C', f.work, 'fetch', '--prune', 'origin']);
+    expect((await git(['-C', f.work, 'rev-parse', '--verify', 'origin/main'])).code).not.toBe(0);
+    await writeFile(join(f.work, 'file.txt'), 'after base deletion\n'); await ok(['-C', f.work, 'commit', '-am', 'after deletion']);
+    await ok(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
+    expect(await f.store.anchors.get(f.current)).toBe(anchor);
+    expect(await ok(['--git-dir', f.upstream, 'rev-parse', f.current.branch])).toBe(await ok(['-C', f.work, 'rev-parse', 'HEAD']));
+  }, 60_000);
+
+  it('publishes the first assigned branch from its durable clone anchor after base deletion and an empty mirror rebuild', async () => {
+    const f = await fixture(), anchor = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
+    await ok(['--git-dir', f.upstream, 'update-ref', '-d', 'refs/heads/main']);
+    await f.restart();
+    expect(await f.store.anchors.get(f.current)).toBe(anchor);
+    await ok(['-C', f.work, 'checkout', '-b', f.current.branch]);
+    await writeFile(join(f.work, 'file.txt'), 'first publish after deletion\n'); await ok(['-C', f.work, 'commit', '-am', 'first publish']);
+    await ok(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
+    expect(await ok(['--git-dir', f.upstream, 'rev-parse', f.current.branch])).toBe(await ok(['-C', f.work, 'rev-parse', 'HEAD']));
+    expect(await f.store.anchors.get(f.current)).toBe(anchor);
+    expect((await git(['--git-dir', f.upstream, 'show-ref', '--verify', 'refs/heads/main'])).code).not.toBe(0);
+  }, 60_000);
+
+  it('pins v2 discovery, ls-refs, and initial fetch across an upstream advance and restart, then releases main for later fetch', async () => {
+    const f = await fixture(false), anchor = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
+    const headers = { Authorization: `Basic ${Buffer.from(`x-access-token:${f.capability}`).toString('base64')}`, 'Git-Protocol': 'version=2' };
+    expect((await fetch(`${f.remote}/info/refs?service=git-upload-pack`, { headers })).status).toBe(200);
+    expect(await f.store.anchors.get(f.current)).toBe(anchor);
+    const seed = join(f.directory, 'seed');
+    await writeFile(join(seed, 'file.txt'), 'advanced before ls-refs\n'); await ok(['-C', seed, 'commit', '-am', 'advance']);
+    await ok(['-C', seed, 'push', f.upstream, 'main']);
+    const advanced = await ok(['-C', seed, 'rev-parse', 'HEAD']);
+    await f.restart();
+    const packet = (line: string) => (Buffer.byteLength(line) + 4).toString(16).padStart(4, '0') + line;
+    const refs = await fetch(`${f.remote}/git-upload-pack`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/x-git-upload-pack-request' },
+      body: packet('command=ls-refs\n') + '0001' + packet('symrefs\n') + packet('ref-prefix refs/heads/main\n') + '0000' });
+    expect(refs.status).toBe(200); expect(await refs.text()).toContain(`${anchor} refs/heads/main`);
+    expect(await f.store.anchors.cloneComplete(f.current)).toBe(false);
+    const clone = join(f.directory, 'v2-clone');
+    await ok(['-c', 'protocol.version=2', '-c', `http.extraHeader=Authorization: ${headers.Authorization}`, 'clone', f.remote, clone]);
+    expect(await ok(['-C', clone, 'rev-parse', 'HEAD'])).toBe(anchor);
+    expect(await f.store.anchors.cloneComplete(f.current)).toBe(true);
+    await ok(['-C', f.work, 'fetch', 'origin']);
+    expect(await ok(['-C', f.work, 'rev-parse', 'origin/main'])).toBe(advanced);
+  }, 60_000);
+
+  it('rejects a missing initial selected base without choosing another branch or recording an unsafe receive-time anchor', async () => {
+    const f = await fixture(false);
+    await ok(['--git-dir', f.upstream, 'update-ref', 'refs/heads/other', await ok(['-C', f.work, 'rev-parse', 'HEAD'])]);
+    await ok(['--git-dir', f.upstream, 'update-ref', '-d', 'refs/heads/main']);
+    const headers = { Authorization: `Basic ${Buffer.from(`x-access-token:${f.capability}`).toString('base64')}` };
+    const discovery = await fetch(`${f.remote}/info/refs?service=git-upload-pack`, { headers });
+    expect(discovery.status).toBe(409); expect(await discovery.text()).toContain('clone base is unavailable');
+    const pushed = await git(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
+    expect(pushed.code).not.toBe(0); expect(pushed.err).toContain('original clone base has not been recorded');
+    expect(await f.store.anchors.get(f.current)).toBeNull();
+    expect((await git(['--git-dir', f.upstream, 'show-ref', '--verify', `refs/heads/${f.current.branch}`])).code).not.toBe(0);
+  }, 60_000);
+
+  it('keeps legacy sessions unanchored across credential rotation, refuses first branch creation, and permits existing branch fast-forward updates after base deletion', async () => {
+    const f = await fixture(false);
+    await f.db.query('UPDATE github_gateway_credentials SET clone_anchor_version=NULL WHERE session_id=$1', [f.current.id]);
+    const capability = await f.store.issue(f.current);
+    await ok(['-C', f.work, 'config', 'http.extraHeader', `Authorization: Basic ${Buffer.from(`x-access-token:${capability}`).toString('base64')}`]);
+    await ok(['-C', f.work, 'fetch', 'origin']);
+    expect(await f.store.anchors.get(f.current)).toBeNull();
+    const rejected = await git(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
+    expect(rejected.code).not.toBe(0); expect(rejected.err).toContain('legacy session has no recorded clone base');
+    await ok(['-C', f.work, 'push', f.upstream, `HEAD:refs/heads/${f.current.branch}`]);
+    await ok(['--git-dir', f.upstream, 'update-ref', '-d', 'refs/heads/main']);
+    await f.restart(); await ok(['-C', f.work, 'fetch', 'origin']);
+    await writeFile(join(f.work, 'file.txt'), 'legacy FF\n'); await ok(['-C', f.work, 'commit', '-am', 'legacy FF']);
+    await ok(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
+  }, 60_000);
+
+  it('accepts malformed historical upstream commits on fetch while enforcing fsck on new VM commits', async () => {
+    const f = await fixture(false), base = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
+    const tree = await ok(['-C', f.work, 'rev-parse', 'HEAD^{tree}']);
+    const malformed = `tree ${tree}\nparent ${base}\ncommitter Test <test@example.com> 1000000000 +0000\n\nmissing author\n`;
+    const written = await git(['--git-dir', f.upstream, 'hash-object', '-t', 'commit', '--literally', '-w', '--stdin'], malformed);
+    expect(written.code).toBe(0); const historical = written.out.trim();
+    await ok(['--git-dir', f.upstream, 'update-ref', 'refs/heads/main', historical]);
+    // Prove this fixture triggers the transfer fsck setting removed from the mirror.
+    const strict = join(f.directory, 'strict.git'); await ok(['init', '--bare', strict]);
+    const rejectedFetch = await git(['-c', 'fetch.fsckObjects=true', '--git-dir', strict, 'fetch', f.upstream, 'main']);
+    expect(rejectedFetch.code).not.toBe(0); expect(rejectedFetch.err).toContain('missingAuthor');
+    await ok(['-C', f.work, 'fetch', 'origin']);
+    expect(await f.store.anchors.get(f.current)).toBe(historical);
+    await ok(['-C', f.work, 'reset', '--hard', historical]);
+    await writeFile(join(f.work, 'file.txt'), 'valid new work\n'); await ok(['-C', f.work, 'commit', '-am', 'valid new work']);
+    await ok(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
+    const valid = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
+    const invalid = (await git(['-C', f.work, 'hash-object', '-t', 'commit', '--literally', '-w', '--stdin'], malformed.replace(`parent ${base}`, `parent ${valid}`))).out.trim();
+    const pushed = await git(['-C', f.work, 'push', 'origin', `${invalid}:refs/heads/${f.current.branch}`]);
+    expect(pushed.code).not.toBe(0); expect(pushed.err).toMatch(/missingAuthor|unpacker error/);
+    expect(await ok(['--git-dir', f.upstream, 'rev-parse', f.current.branch])).toBe(valid);
   }, 60_000);
 
   it('clones, pushes the assigned branch to upstream, and rejects multi-ref, deletion, tags, and force pushes', async () => {
@@ -198,6 +332,35 @@ describe('real Git smart HTTP gateway', () => {
     expect((await git(['-C', f.work, 'push', '--force', 'origin', `main:refs/heads/${f.current.branch}`])).code).not.toBe(0);
     expect(await ok(['--git-dir', f.upstream, 'rev-parse', f.current.branch])).toBe(commit);
   }, 60_000);
+  it('enforces the upstream lease when a branch appears or advances after mirror fetch, and reauthorizes inside the hook', async () => {
+    const f = await fixture(), base = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
+    await ok(['-C', f.work, 'checkout', '-b', f.current.branch]);
+    await writeFile(join(f.work, 'file.txt'), 'client next\n'); await ok(['-C', f.work, 'commit', '-am', 'client next']);
+    const seed = join(f.directory, 'seed');
+    await writeFile(join(seed, 'file.txt'), 'concurrent upstream\n'); await ok(['-C', seed, 'commit', '-am', 'concurrent']);
+    const concurrent = await ok(['-C', seed, 'rev-parse', 'HEAD']);
+    await ok(['-C', seed, 'push', f.upstream, 'HEAD:refs/heads/concurrent']);
+    const original = f.gateway.authorize.bind(f.gateway);
+    let action: () => Promise<void> = async () => { await ok(['--git-dir', f.upstream, 'update-ref', `refs/heads/${f.current.branch}`, concurrent]); };
+    vi.spyOn(f.gateway, 'authorize').mockImplementation(async (id, write, capability) => {
+      if (write && capability === undefined) await action();
+      return original(id, write, capability);
+    });
+    const first = await git(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
+    expect(first.code).not.toBe(0); expect(first.err).toContain('upstream push rejected');
+    expect(await ok(['--git-dir', f.upstream, 'rev-parse', f.current.branch])).toBe(concurrent);
+    // Existing-branch oldOID is also a strict lease, not just an ancestry check.
+    await ok(['--git-dir', f.upstream, 'update-ref', `refs/heads/${f.current.branch}`, base]);
+    const existing = await git(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
+    expect(existing.code).not.toBe(0); expect(existing.err).toContain('upstream push rejected');
+    expect(await ok(['--git-dir', f.upstream, 'rev-parse', f.current.branch])).toBe(concurrent);
+    await ok(['--git-dir', f.upstream, 'update-ref', `refs/heads/${f.current.branch}`, base]);
+    action = async () => { throw new GitHubError('access revoked at hook time', 403); };
+    const revoked = await git(['-C', f.work, 'push', 'origin', `HEAD:refs/heads/${f.current.branch}`]);
+    expect(revoked.code).not.toBe(0); expect(revoked.err).toContain('session expired, disabled, or no longer authorized');
+    expect(await ok(['--git-dir', f.upstream, 'rev-parse', f.current.branch])).toBe(base);
+  }, 60_000);
+
   it('propagates upstream push rejection to the git client', async () => {
     const f = await fixture(); await writeFile(join(f.upstream, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
     await ok(['-C', f.work, 'checkout', '-b', f.current.branch]);

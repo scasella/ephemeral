@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, TERMINAL_FONT_STORAGE_KEY, TerminalViewport, isTerminalFindShortcut, readTerminalFontSize, saveTerminalFontSize, searchResultLabel, terminalFontSize } from './terminal-controls';
+import { DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, TERMINAL_FONT_STORAGE_KEY, TerminalViewport, TerminalRecoveryFocus, isTerminalFindShortcut, readTerminalFontSize, saveTerminalFontSize, searchResultLabel, terminalFontSize } from './terminal-controls';
 
 describe('terminal view continuity', () => {
   it('discards hidden input and geometry changes, then fits the same live view when shown', () => {
@@ -90,5 +90,37 @@ describe('terminal local controls', () => {
     expect(searchResultLabel('missing', { resultIndex: -1, resultCount: 0 })).toBe('No matches');
     expect(searchResultLabel('match', { resultIndex: 1, resultCount: 3 })).toBe('2 of 3 matches');
     expect(searchResultLabel('match', { resultIndex: -1, resultCount: 1000 })).toBe('1000+ matches');
+  });
+});
+
+
+describe('recovery keyboard focus intent', () => {
+  it('restores terminal focus once after ready if the user stayed on the recovery action', () => {
+    const recovery = new TerminalRecoveryFocus(); const opener = new EventTarget(); const body = new EventTarget();
+    recovery.begin(opener); recovery.movedTo(opener);
+    expect(recovery.ready(opener, body, true, false)).toBe(true);
+    expect(recovery.ready(opener, body, true, false)).toBe(false);
+    recovery.begin(opener);
+    // Disabling the opener may leave browser focus on its body.
+    expect(recovery.ready(body, body, true, false)).toBe(true);
+  });
+
+  it('never steals newer Find, toolbar, or outside focus on delayed ready, even after navigation back', () => {
+    const recovery = new TerminalRecoveryFocus(); const opener = new EventTarget(); const body = new EventTarget();
+    for (const nextTarget of [new EventTarget(), new EventTarget(), new EventTarget()]) {
+      recovery.begin(opener); recovery.movedTo(nextTarget);
+      expect(recovery.ready(nextTarget, body, true, false)).toBe(false);
+      recovery.begin(opener); recovery.movedTo(nextTarget); recovery.movedTo(opener);
+      expect(recovery.ready(opener, body, true, false)).toBe(false);
+    }
+    recovery.begin(opener); recovery.cancel();
+    expect(recovery.ready(opener, body, true, false)).toBe(false);
+  });
+
+  it('discards intent for hidden views, modal interaction, and unavailable active focus', () => {
+    const recovery = new TerminalRecoveryFocus(); const opener = new EventTarget(); const body = new EventTarget();
+    recovery.begin(opener); expect(recovery.ready(opener, body, false, false)).toBe(false);
+    recovery.begin(opener); expect(recovery.ready(opener, body, true, true)).toBe(false);
+    recovery.begin(opener); expect(recovery.ready(new EventTarget(), body, true, false)).toBe(false);
   });
 });

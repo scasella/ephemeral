@@ -65,3 +65,18 @@ export class TerminalViewport {
     this.applySize(Math.min(400, Math.max(10, Math.floor(dimensions.cols))), Math.min(200, Math.max(2, Math.floor(dimensions.rows))));
   }
 }
+
+// Recovery may take seconds. Only the original recovery action may restore
+// terminal focus; any later navigation wins, even if focus returns to its opener.
+export class TerminalRecoveryFocus {
+  private pending = false;
+  private origin: EventTarget | null = null;
+  begin(origin: EventTarget | null) { this.pending = true; this.origin = origin; }
+  movedTo(target: EventTarget | null) { if (target !== this.origin) this.cancel(); }
+  cancel() { this.pending = false; }
+  ready(active: EventTarget | null, body: EventTarget, visible: boolean, modalOpen: boolean) {
+    const focus = this.pending && visible && !modalOpen && (active === this.origin || active === body);
+    this.cancel();
+    return focus;
+  }
+}

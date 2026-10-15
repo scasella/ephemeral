@@ -1,3 +1,6 @@
+import { SHELL_NAME_ERROR, shellNameValue } from '../shared/shell-name';
+export { SHELL_NAME_ERROR, shellNameValue } from '../shared/shell-name';
+
 export type WorkspaceShell = {
   id: string;
   requestId: string | null;
@@ -10,16 +13,11 @@ export type WorkspaceShell = {
 };
 export type ShellSnapshot = { mode: 'live' | 'preview'; shells: WorkspaceShell[]; canCreate: boolean; reason: string | null };
 export type ShellOperation = { requestId: string; kind: 'create' | 'close' | 'rename'; shellId?: string; name?: string };
-export type ShellWorkspaceState = { snapshot: ShellSnapshot | null; pending: ShellOperation | null; loading: boolean; sending: boolean; error: string };
+export type ShellWorkspaceState = { snapshot: ShellSnapshot | null; pending: ShellOperation | null; loading: boolean; sending: boolean; recoveringPrimary?: boolean; error: string };
 export type ShellTransport = (path: string, body: unknown | undefined, signal: AbortSignal) => Promise<ShellSnapshot>;
 
 class ShellRequestError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const SHELL_NAME_ERROR = 'Shell name must contain 1–80 characters without control characters.';
-export function shellNameValue(name: unknown): string | null {
-  if (typeof name !== 'string' || /[\u0000-\u001f\u007f-\u009f]/.test(name) || !name.trim() || name.trim().length > 80) return null;
-  return name.trim();
-}
 export function parseShellSnapshot(value: unknown): ShellSnapshot {
   const invalid = () => { throw new Error('Unable to read the saved shell list. Refresh shells to try again.'); };
   if (!value || typeof value !== 'object') return invalid();
@@ -128,6 +126,26 @@ export class ShellWorkspaceClient {
     this.refreshing = promise;
     void promise.finally(() => { if (this.refreshing === promise) this.refreshing = undefined; });
     return promise;
+  }
+  async recoverPrimary(): Promise<boolean> {
+    if (!this.active || this.state.sending || this.state.pending) return false;
+    const revision = ++this.revision;
+    this.update({ sending: true, recoveringPrimary: true, loading: false, error: '' });
+    try {
+      const snapshot = await this.request(`/sessions/${encodeURIComponent(this.sessionId)}/shells/codex/recover`, {});
+      if (!this.active || revision !== this.revision) return false;
+      this.apply(snapshot);
+      if (snapshot.shells.find(shell => shell.id === 'codex')?.state !== 'open') {
+        this.update({ error: 'The primary shell is not ready. Refresh saved shells before trying recovery again.' });
+        return false;
+      }
+      return true;
+    } catch (failure) {
+      if (this.active && revision === this.revision) this.update({ error: `${(failure as Error).message} Reconnect to check whether the shell is available before trying recovery again.` });
+      return false;
+    } finally {
+      if (this.active && revision === this.revision) this.update({ sending: false, recoveringPrimary: false });
+    }
   }
   async perform(operation: ShellOperation) {
     const replacesCreate = operation.kind === 'close' && this.state.pending?.kind === 'create' && this.state.snapshot?.shells.some(shell => shell.id === operation.shellId && shell.requestId === this.state.pending?.requestId);

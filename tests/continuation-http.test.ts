@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApplication } from '../server/app.js';
+import { createLiveApplication } from './helpers/create-live-application.js';
 import { readConfig } from '../server/config.js';
 import { digest, seal } from '../server/auth/crypto.js';
 import { continuationPreview } from '../server/continuation.js';
@@ -32,7 +33,7 @@ describe('continuation HTTP ownership, intent and preview honesty', () => {
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'ep-continue-http-'));
     const config = readConfig({ EPHEMERAL_MODE: 'preview', DATA_DIR: directory, PUBLIC_URL: 'http://localhost:4327', ENCRYPTION_KEY: key, ALLOWED_GITHUB_IDS: '42,99' });
-    application = await createApplication({ ...config, mode: 'live' }); origin = await listen(application);
+    application = await createLiveApplication({ ...config, mode: 'live' }); origin = await listen(application);
     preview = await createApplication(config); previewOrigin = await listen(preview);
     for (const [cookie, userId, expires] of [['owner-browser', '42', Date.now() + 3600_000], ['expired-browser', '42', Date.now() - 1]] as const) {
       await application.db.query('INSERT INTO browser_sessions(hash,user_id,login,avatar_url,credential,expires_at) VALUES($1,$2,$3,$4,$5,$6)',

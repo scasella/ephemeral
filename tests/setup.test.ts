@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { createSessionRepository } from '../server/core/repository.js';
 import { createSetupController, createSetupRepository, redactSetupOutput } from '../server/setup.js';
@@ -72,6 +73,53 @@ describe('durable explicit repository setup', () => {
     expect(result.blockedUntil).toBeNull();
   });
 
+  it('retains redacted startup and final failure output after exceeding the output budget', async () => {
+    const { s, state } = await saved('head-tail');
+    run.mockImplementationOnce(async (_session, _input, output) => {
+      output('setup startup diagnostic\n');
+      output('middle progress line\n'.repeat(5000));
+      output('TOKEN=private-tail-value\nFinal failure: package registry unavailable\n');
+      return { status: 'failed', exitCode: 17 };
+    });
+    await setup.start(s, state.recipe!.version);
+    const result = await finished(s);
+    expect(result).toMatchObject({ status: 'failed', truncated: true, outputRetention: 'head_tail', exitCode: 17 });
+    expect(result.output).toContain('setup startup diagnostic');
+    expect(result.output).toContain('[Setup output limit reached; omitted middle output.]');
+    expect(result.output).toContain('Final failure: package registry unavailable');
+    expect(result.output).not.toContain('private-tail-value');
+    expect(Buffer.byteLength(result.output)).toBeLessThanOrEqual(65536);
+  });
+
+  it('never persists split credential values or clipped prefixes in durable snapshots', async () => {
+    const { s, state } = await saved('redaction-persistence');
+    const secret = randomBytes(32).toString('hex');
+    let emit!: (text: string) => void, finish!: () => void;
+    run.mockImplementationOnce((_session, _input, onOutput) => {
+      emit = onOutput; return new Promise(resolve => { finish = () => resolve({ status: 'succeeded', exitCode: 0 }); });
+    });
+    const snapshots: string[] = [];
+    const query = database.query.bind(database);
+    vi.spyOn(database, 'query').mockImplementation(async (sql, params) => {
+      if (sql.startsWith('UPDATE session_setup_runs SET data=$2')) snapshots.push(String(params?.[1]));
+      return query(sql, params);
+    });
+    await setup.start(s, state.recipe!.version); await vi.waitFor(() => expect(emit).toBeTypeOf('function'));
+    emit('safe progress\n{"access_token":"' + secret.slice(0, 18));
+    // Wait for an actual durable running snapshot, not a timing assumption.
+    await vi.waitFor(() => expect(snapshots.some(snapshot => snapshot.includes('safe progress'))).toBe(true));
+    expect(snapshots.every(snapshot => !snapshot.includes(secret.slice(0, 8)))).toBe(true);
+    emit('\x1b['); emit('31m' + secret.slice(18) + '"}\n');
+    emit('x'.repeat(65520) + '\n{"refresh_token":"' + secret.slice(0, 14));
+    emit(secret.slice(14) + '"}\n'); finish();
+    const result = await finished(s);
+    const stored = await db.query<{ data: { output: string } }>('SELECT data FROM session_setup_runs WHERE id=$1', [result.id]);
+    expect(snapshots.every(snapshot => !snapshot.includes(secret.slice(0, 8)))).toBe(true);
+    expect(stored.rows[0]!.data.output.includes(secret.slice(0, 8))).toBe(false);
+    expect(result.truncated).toBe(true);
+    expect(result.recipe.command).toBe(input.command);
+  });
+
   it('retains an uncertain execution hold across controller restart and never replays it', async () => {
     const { s, state } = await saved('unknown'); run.mockRejectedValueOnce(new Error('ghp_do-not-echo-private-token'));
     await setup.start(s, state.recipe!.version); const result = await finished(s);
@@ -109,11 +157,11 @@ describe('durable explicit repository setup', () => {
     run.mockImplementationOnce((_s, _i, _output, signal: AbortSignal) => new Promise(resolve => signal.addEventListener('abort', () => resolve({ status: 'cancelled', exitCode: null }), { once: true })));
     const started = await setup.start(s, state.recipe!.version); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     await expect(setup.cancel(s, 'foreign-run')).rejects.toMatchObject({ status: 409 });
-    await setup.cancel(s, started.run.id); expect(await finished(s)).toMatchObject({ status: 'cancelled', blockedUntil: null });
+    await setup.cancel(s, started.run.id); expect(await finished(s)).toMatchObject({ status: 'cancelled', reason: 'user_cancelled', blockedUntil: null });
     run.mockImplementationOnce((_s, _i, _output, signal: AbortSignal) => new Promise(resolve => signal.addEventListener('abort', () => resolve({ status: 'cancelled', exitCode: null }), { once: true })));
     await setup.start(s, state.recipe!.version); await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
     await repo.update({ ...s, expiresAt: new Date(Date.now() - 1).toISOString() });
-    expect(await finished(s)).toMatchObject({ status: 'cancelled', blockedUntil: null });
+    expect(await finished(s)).toMatchObject({ status: 'interrupted', reason: 'session_ended', blockedUntil: null });
   });
 
   it('caps execution at remaining session time and records timeout when its deadline triggers', async () => {

@@ -85,6 +85,33 @@ describe('durable continuation intent and fresh session creation', () => {
     expect(results[0].id).toBe(results[1].id); expect(await f.repo.list('42')).toHaveLength(2);
     await expect(f.controller.continue(f.source, 'oauth', sha, randomUUID())).rejects.toThrow('active session');
   });
+  it('resets only a proven pre-insert uniqueness conflict and retries the same reserved target', async () => {
+    const f = await fixture(), request = randomUUID(), activeId = randomUUID();
+    const active = { ...f.source, id: activeId, branch: `ephemeral/${activeId}`, state: 'running' as const };
+    await f.repo.insert(active);
+    await expect(f.controller.continue(f.source, 'oauth', sha, request)).rejects.toMatchObject({ code: 'CONTINUATION_REJECTED', outcome: 'not_created' });
+    const row = (await f.db.query<{ status: string; target_id: string }>('SELECT status,target_id FROM ephemeral_continuation_requests')).rows[0];
+    expect(row.status).toBe('reserved'); expect(await f.repo.get(row.target_id)).toBeNull();
+    await f.repo.update({ ...active, state: 'ended' });
+    expect((await f.controller.continue(f.source, 'oauth', sha, request)).id).toBe(row.target_id);
+  });
+  it('keeps creating after an arbitrary insert connection error despite an empty recovery read', async () => {
+    const f = await fixture(), request = randomUUID();
+    vi.spyOn(f.repo, 'insert').mockRejectedValueOnce(new Error('storage connection lost'));
+    await expect(f.controller.continue(f.source, 'oauth', sha, request)).rejects.toThrow('connection lost');
+    const row = (await f.db.query<{ status: string; target_id: string }>('SELECT status,target_id FROM ephemeral_continuation_requests')).rows[0];
+    expect(row.status).toBe('creating'); expect(await f.repo.get(row.target_id)).toBeNull();
+    expect((await f.controller.continue(f.source, 'oauth', sha, request)).id).toBe(row.target_id);
+  });
+  it('recovers a real committed session insert whose acknowledgement was lost', async () => {
+    const f = await fixture(), request = randomUUID(), insert = f.repo.insert.bind(f.repo);
+    vi.spyOn(f.repo, 'insert').mockImplementationOnce(async session => { await insert(session); throw new Error('insert acknowledgement lost'); });
+    const child = await f.controller.continue(f.source, 'oauth', sha, request);
+    expect(child.state).toBe('provisioning');
+    expect((await f.controller.continue(f.source, 'oauth', sha, request)).id).toBe(child.id);
+    expect((await f.db.query<{ status: string }>('SELECT status FROM ephemeral_continuation_requests')).rows[0].status).toBe('creating');
+    expect(await f.repo.list('42')).toHaveLength(2);
+  });
   it('recovers a lost response after session insertion without allocating a second target', async () => {
     const f = await fixture(), request = randomUUID(); const real = f.manager.create.bind(f.manager);
     vi.spyOn(f.manager, 'create').mockImplementationOnce(async (...args) => { await real(...args); throw new Error('response lost after insert'); });

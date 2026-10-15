@@ -157,8 +157,45 @@ describe('durable lifecycle', () => {
     provider.kill.mockImplementation(async id => { provider.live.delete(id); });
     vi.mocked(creds.revokeGitHub).mockResolvedValue();
     const restarted = new SessionManager(repo, provider, creds); managers.push(restarted);
-    await restarted.reconcile();
+    await restarted.reconcileOne(session.id);
     await until(async () => (await restarted.get(session.id))?.state === 'ended');
+  });
+
+  it.each(['gateway', 'github'] as const)('retains active ownership after VM deletion while %s cleanup fails across restart', async phase => {
+    const { db, manager, repo, provider, creds } = await setup();
+    const session = await running(manager);
+    const failure = phase === 'gateway' ? vi.mocked(creds.disable) : vi.mocked(creds.revokeGitHub);
+    failure.mockRejectedValue(new Error('credential cleanup unavailable'));
+    await manager.stop(session.id);
+    await manager.shutdown();
+    const pending = (await repo.get(session.id))!;
+    expect(pending.state).toBe('cleanup_pending');
+    expect(pending.endedAt).toBeNull();
+    expect(pending.cleanup.vm).toBe('confirmed');
+    expect(pending.cleanup[phase]).toBe('failed');
+    expect(pending.cleanup[phase === 'gateway' ? 'github' : 'gateway']).toBe('confirmed');
+    expect(provider.live.size).toBe(0);
+    expect((await repo.events(session.id)).some(event => event.kind === 'ended')).toBe(false);
+
+    // Reopen the repository as a new worker would: the SQL active-user index must
+    // continue excluding a second session even though the VM is already absent.
+    const reopened = await createSessionRepository({
+      query: async <T>(sql: string, params?: unknown[]) => ({ rows: (await db.query<T>(sql, params)).rows }), close: async () => {},
+    });
+    const restarted = new SessionManager(reopened, provider, creds); managers.push(restarted);
+    await expect(restarted.create(input)).rejects.toThrow('already have an active');
+    const stillPending = await restarted.reconcileOne(session.id);
+    expect(stillPending.state).toBe('cleanup_pending');
+    expect(stillPending.endedAt).toBeNull();
+    expect(stillPending.cleanup[phase]).toBe('failed');
+    expect(provider.create).toHaveBeenCalledTimes(1);
+    failure.mockResolvedValue();
+    const recovered = await restarted.reconcileOne(session.id);
+    expect(recovered.state).toBe('ended');
+    expect(recovered.endedAt).not.toBeNull();
+    expect(recovered.cleanup).toEqual({ vm: 'confirmed', gateway: 'confirmed', github: 'confirmed', codex: 'confirmed' });
+    const next = await running(restarted);
+    expect(next.id).not.toBe(session.id);
   });
 
   it('marks preparation failure only after confirmed destruction and does not leak SDK errors', async () => {
@@ -183,7 +220,7 @@ describe('durable lifecycle', () => {
     expect((await repo.get(session.id))?.state).toBe('cleanup_pending');
     await markCreation(repo, session.id, Date.now() - 1000);
     const restarted = new SessionManager(repo, provider, credentials()); managers.push(restarted);
-    await restarted.reconcile();
+    await restarted.reconcileOne(session.id);
     await until(async () => (await repo.get(session.id))?.state === 'failed');
   });
 
@@ -220,6 +257,36 @@ describe('durable lifecycle', () => {
     await manager.reconcile();
     await until(async () => (await manager.get(session.id))?.state === 'ended');
     expect(provider.connectTerminal).not.toHaveBeenCalled();
+  });
+
+  it('reauthorizes extensions inside the lease and leaves deadline and provider untouched on denial', async () => {
+    const { manager, provider } = await setup(), session = await running(manager);
+    const authorize = vi.fn(async () => { throw new Error('access revoked'); });
+    await expect(manager.extend(session.id, 30, authorize)).rejects.toThrow('access revoked');
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ id: session.id, sandboxId: session.sandboxId }));
+    expect((await manager.get(session.id))?.expiresAt).toBe(session.expiresAt);
+    expect(provider.setTimeout).not.toHaveBeenCalled();
+  });
+
+  it.each(['stop', 'repository', 'sandboxId', 'expiresAt'] as const)('rejects an extension when %s changes during authorization', async change => {
+    const { manager, repo, provider } = await setup(), session = await running(manager);
+    let entered!: () => void, release!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+    const extension = manager.extend(session.id, 30, async () => { entered(); await gate; });
+    const rejected = expect(extension).rejects.toThrow('Session changed during authorization');
+    await waiting;
+    if (change === 'stop') await manager.stop(session.id);
+    else {
+      const current = (await repo.get(session.id))!;
+      if (change === 'repository') current.repository = 'alice/other';
+      if (change === 'sandboxId') current.sandboxId = 'replacement-vm';
+      if (change === 'expiresAt') current.expiresAt = new Date(Date.parse(current.expiresAt) - 1000).toISOString();
+      await repo.update(current);
+    }
+    release(); await rejected;
+    expect(provider.setTimeout).not.toHaveBeenCalled();
+    expect((await repo.events(session.id)).some(event => event.kind === 'extended')).toBe(false);
+    if (change === 'stop') expect((await repo.get(session.id))?.state).toBe('cleanup_pending');
   });
 
   it('rolls back a provider extension failure to the original deadline', async () => {

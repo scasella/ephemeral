@@ -20,7 +20,46 @@ export function setupRunActive(run: SetupRun | null): boolean { return run?.stat
 export function setupRunBlocked(run: SetupRun | null, now: number): boolean { return Boolean(run?.blockedUntil && Date.parse(run.blockedUntil) > now); }
 export function setupRunSummary(run: SetupRun): string {
   const labels: Record<SetupRun['status'], string> = { queued: 'Queued', running: 'Running', succeeded: 'Succeeded', failed: 'Failed', timed_out: 'Timed out', cancelled: 'Cancelled', interrupted: 'Interrupted' };
-  return `${labels[run.status]}${run.exitCode === null ? '' : ` · exit code ${run.exitCode}`}`;
+  const reasons: Record<NonNullable<SetupRun['reason']>, string> = {
+    user_cancelled: 'cancelled by you', session_ended: 'machine ended or expired', authorization_failed: 'repository access unavailable',
+    persistence_failed: 'saving setup failed', server_shutdown: 'server stopped', timeout: 'timeout reached',
+    provider_unavailable: 'setup execution unavailable', completion_unconfirmed: 'completion unconfirmed',
+  };
+  const label = run.invocationStarted === false && !setupRunActive(run) ? 'Did not start' : labels[run.status];
+  return `${label}${run.reason ? ` · ${reasons[run.reason]}` : ''}${run.exitCode === null ? '' : ` · exit code ${run.exitCode}`}`;
+}
+export function setupRunGuidance(run: SetupRun): string | null {
+  if (setupRunActive(run)) return null;
+  if (run.invocationStarted === false) {
+    const beforeExecution: Record<NonNullable<SetupRun['reason']>, string> = {
+      user_cancelled: 'You cancelled before execution. Run again only when you are ready.',
+      session_ended: 'The machine ended or expired before execution. Run the saved recipe explicitly on an available machine.',
+      authorization_failed: 'Repository access could not be verified before execution. Restore access, check saved setup, then explicitly run again.',
+      persistence_failed: 'Setup could not save its execution record. Check saved setup after storage recovers, then explicitly run again.',
+      server_shutdown: 'The server stopped before execution. Reconnect, check saved setup, then explicitly run again.',
+      timeout: 'The setup deadline passed before execution. Check the machine lifetime and saved timeout before running again.',
+      provider_unavailable: 'Setup execution is unavailable. Check saved setup and retry explicitly when the service is restored.',
+      completion_unconfirmed: 'Execution did not start. Check saved setup before explicitly running again.',
+    };
+    return run.reason ? beforeExecution[run.reason] : 'Execution did not start. Check saved setup before explicitly running again.';
+  }
+  if (run.status === 'interrupted' && (run.blockedUntil || !run.reason || run.reason === 'completion_unconfirmed')) return 'The command may have run. Its completion could not be confirmed. Review retained output and wait for any execution hold to clear before deciding whether to run again. Setup is never replayed automatically.';
+  switch (run.reason) {
+    case 'user_cancelled': return 'You requested cancellation. Review the recorded output before deciding whether to run again.';
+    case 'session_ended': return 'Setup stopped because the machine ended or expired. Review the output before running on another machine.';
+    case 'authorization_failed': return 'Setup stopped because repository access could not be verified. Restore access and review the output before another run.';
+    case 'persistence_failed': return 'Setup stopped because progress could not be saved. Check saved setup after storage recovers and review the output before another run.';
+    case 'server_shutdown': return 'The server stopped this setup run. Reconnect and check its recorded outcome. Setup is never replayed automatically.';
+    case 'timeout': return 'Setup reached its timeout. Review the output or increase the saved timeout before retrying.';
+    default: return null;
+  }
+}
+
+export function setupOutputNotice(run: SetupRun): string | null {
+  if (!run.truncated) return null;
+  return run.outputRetention === 'head_tail'
+    ? 'Saved output is limited to 64 KiB. The beginning and end are retained; a marker identifies the omitted middle. The final tail is saved when the run finishes.'
+    : 'Saved output exceeded its limit and was truncated.';
 }
 
 export async function requestSetup(sessionId: string, action: SetupAction, signal: AbortSignal): Promise<SetupState> {

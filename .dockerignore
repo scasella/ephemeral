@@ -1,10 +1,36 @@
-node_modules
-dist
-.data
-.env
-.git
-*.log
+# Only build inputs enter the context. Keep private working files out of
+# builder layers/cache as well as the final runtime image.
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!vite.config.ts
+!index.html
+!server/**/*.ts
+!shared/**/*.ts
+!src/**/*.ts
+!src/**/*.tsx
+!src/**/*.css
+!tests/**/*.ts
+!scripts/**/*.ts
+!sandbox/**/*.ts
 
-.DS_Store
-*.pem
-.env.*
+# These exclusions win even when a private directory contains source-like files.
+**/node_modules
+**/node_modules/**
+**/dist
+**/dist/**
+**/.data
+**/.data/**
+**/.git
+**/.git/**
+**/.ssh
+**/.ssh/**
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.log
+**/.DS_Store

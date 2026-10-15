@@ -16,7 +16,7 @@ From the repository root, use Node 24 and installed Git:
 npm run build
 ```
 
-Production serves the generated `dist` files. Do not use `npm run dev` for the public tunnel: it starts Vite development middleware. `NODE_ENV=production` selects static serving and prevents local preview from being published accidentally.
+Production serves the generated `dist` files. Live mode requires `NODE_ENV=production` and fails before opening application resources or Vite development middleware if it is missing or different. `npm run live` sets production automatically. Local preview remains available in development and test environments.
 
 Create a private live configuration once. This command writes a random 32-byte base64 encryption key directly into the ignored file without printing it; `flag: 'wx'` refuses to overwrite an existing file. If `.env.live` already exists, retain it and edit it privately instead.
 

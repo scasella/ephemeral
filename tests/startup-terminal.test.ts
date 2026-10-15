@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sandbox } from 'e2b';
 import { E2BProvider } from '../server/infra/e2b.js';
 
-const stubs = vi.hoisted(() => ({ get: vi.fn(), run: vi.fn(), create: vi.fn(), sendInput: vi.fn(), resize: vi.fn(), kill: vi.fn(), disconnect: vi.fn() }));
+const stubs = vi.hoisted(() => ({ get: vi.fn(), run: vi.fn(), create: vi.fn(), sendInput: vi.fn(), resize: vi.fn(), kill: vi.fn(), disconnect: vi.fn(), wait: vi.fn() }));
 vi.mock('e2b', async importOriginal => {
   const actual = await importOriginal<typeof import('e2b')>();
   return { ...actual, ApiClient: class { api = { GET: stubs.get }; },
@@ -15,11 +15,13 @@ vi.mock('e2b', async importOriginal => {
 });
 const provider = () => new E2BProvider({ apiKey: 'test-only-key', templateId: 'test-template', gatewayUrl: 'https://gateway.example.test' });
 const info = () => ({ sandboxID: 'sandbox-a', state: 'running', envdVersion: '0.4.0', envdAccessToken: 'test-only-token', lifecycle: { autoResume: false } });
+let finishPty!: () => void;
 beforeEach(() => {
+  stubs.wait.mockReset().mockImplementation(() => new Promise<void>(resolve => { finishPty = resolve; }));
   stubs.get.mockReset().mockResolvedValue({ data: info() });
   stubs.run.mockReset().mockResolvedValue({ exitCode: 0, stdout: '{"state":"open"}\nEPHEMERAL_SHELL_COMPLETE\n' });
   stubs.disconnect.mockReset().mockResolvedValue(undefined);
-  stubs.create.mockReset().mockResolvedValue({ pid: 123, disconnect: stubs.disconnect });
+  stubs.create.mockReset().mockResolvedValue({ pid: 123, disconnect: stubs.disconnect, wait: stubs.wait });
   stubs.sendInput.mockReset().mockResolvedValue(undefined); stubs.resize.mockReset().mockResolvedValue(undefined); stubs.kill.mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => vi.restoreAllMocks());
@@ -31,7 +33,11 @@ describe('manual terminal reconnect without VM lifecycle mutations', () => {
     expect(stubs.get).toHaveBeenCalledWith('/sandboxes/{sandboxID}', { params: { path: { sandboxID: 'sandbox-a' } }, signal: expect.any(AbortSignal) });
     expect(stubs.create).toHaveBeenCalledWith(expect.objectContaining({ user: 'user', cwd: '/home/user/workspace', timeoutMs: 0 }));
     expect(new TextDecoder().decode(stubs.sendInput.mock.calls[0][1])).toBe("exec tmux attach-session -t '=ephemeral'\r");
+    expect(stubs.wait).toHaveBeenCalledOnce();
+    const exited = vi.fn(); terminal.onExit!(exited);
     await terminal.write('test'); await terminal.resize(80, 24); await terminal.disconnect(); await terminal.disconnect();
+    finishPty(); await Promise.resolve();
+    expect(exited).not.toHaveBeenCalled();
     expect(stubs.disconnect).toHaveBeenCalledTimes(1); expect(stubs.kill).toHaveBeenCalledTimes(1);
     expect(connect).not.toHaveBeenCalled(); expect(timeout).not.toHaveBeenCalled(); expect(create).not.toHaveBeenCalled();
   });
