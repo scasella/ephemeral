@@ -38,11 +38,11 @@ Launch from a repository, keep Codex and a second shell within reach, save next-
 
 ## Release status
 
-Ephemeral is a self-hosted, invite-only pilot licensed under [MIT](LICENSE). The sanitized source and reviewed fixes are committed to `main` in the **private** GitHub repository `scasella/ephemeral`. Public publication and GitHub CI remain **pending**. No hosted public service has been deployed. The package setting `private: true` prevents accidental npm publication; it does not control GitHub repository visibility.
+Ephemeral is an experimental, locally runnable project licensed under [MIT](LICENSE). The sanitized source and reviewed fixes are public on `main` at [scasella/ephemeral](https://github.com/scasella/ephemeral). **GitHub CI remains pending** at the owner’s request; its workflow is paused. Report vulnerabilities through [GitHub private reporting](https://github.com/scasella/ephemeral/security/advisories/new). No hosted public service has been deployed. The package setting `private: true` prevents accidental npm publication; it does not control GitHub repository visibility.
 
 The release review repaired cross-generation Preview isolation, enforced the reviewed head/base pair for PR creation, and hardened local database locking and Compose password handling. See [release readiness and remaining gates](docs/RELEASE-READINESS.md), [release notes](CHANGELOG.md), [contributor setup](CONTRIBUTING.md), and [security reporting status](SECURITY.md).
 
-This publication copy uses a fresh history and excludes private live-test reports/screenshots. See [validation scope](docs/VALIDATION.md), [hosting and Sites compatibility](docs/HOSTING.md), [hosted acceptance](docs/HOSTED-ACCEPTANCE.md), and the [retention](docs/RETENTION.md) and [support](docs/SUPPORT.md) drafts. Contact setup and policy activation remain pending.
+This publication copy uses a fresh history and excludes private live-test reports/screenshots. See [validation scope](docs/VALIDATION.md), [hosting and Sites compatibility](docs/HOSTING.md), [hosted acceptance](docs/HOSTED-ACCEPTANCE.md), and the [retention](docs/RETENTION.md) and [support](docs/SUPPORT.md) drafts. Hosted support/contact setup and retention-policy activation remain pending; private vulnerability reporting is available as described in [SECURITY](SECURITY.md).
 
 Compute teardown, local credential removal, and upstream revocation are independent outcomes. Remote ChatGPT/Codex token revocation remains **unverified**. This version must not be advertised as automatically revoking every upstream account credential.
 

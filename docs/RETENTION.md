@@ -1,6 +1,6 @@
 # Retention policy draft
 
-Status: proposed pilot policy, not an activated hosted-service promise. The owner has kept the private contact pending. The product currently has no account/content deletion UI or general scheduled purge. Do not invite hosted users under a promised deletion period until the operator procedure and backup behavior have been implemented and tested.
+Status: proposed pilot policy, not an activated hosted-service promise. GitHub private reporting handles source vulnerabilities as described in [SECURITY](../SECURITY.md); a hosted support/deletion contact remains pending. The product currently has no account/content deletion UI or general scheduled purge. Do not invite hosted users under a promised deletion period until the operator procedure and backup behavior have been implemented and tested.
 
 ## Current behavior
 

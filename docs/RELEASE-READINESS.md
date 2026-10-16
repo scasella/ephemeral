@@ -1,10 +1,10 @@
 # Release readiness
 
-The sanitized source and reviewed fixes are committed to `main` in the private GitHub repository `scasella/ephemeral`. This is an experimental local source-release candidate licensed under [MIT](../LICENSE), with copyright credited to scasella. Public publication and GitHub CI remain pending. No public hosted service is represented by this source tree.
+The sanitized source and reviewed fixes are public on `main` at [scasella/ephemeral](https://github.com/scasella/ephemeral). This is an experimental locally runnable source project licensed under [MIT](../LICENSE), with copyright credited to scasella. GitHub private vulnerability reporting is enabled. GitHub CI remains pending at the owner’s request; its workflow is paused. No public hosted service is represented by this source tree.
 
 ## Source preparation
 
-The publication tree has a fresh root history using the owner's verified GitHub noreply identity. It contains no original ancestors or local editor snapshot refs. Original history, detailed live-test records and screenshots are retained privately outside this publication checkout. One reviewed synthetic local-preview overview remains. Public validation describes observations without publishing private repository URLs, operational resource IDs, exact test timelines or personal contact details.
+The publication tree has a fresh root history using the owner's verified GitHub noreply identity. It contains no original ancestors or local editor snapshot refs. Original history, detailed live-test records and screenshots are retained privately outside this publication checkout. Public documentation includes reviewed simulation screenshots and GIFs with [capture provenance](media/README.md). Public validation describes observations without publishing private repository URLs, operational resource IDs, exact test timelines or personal contact details.
 
 The release review repaired generation-specific private Preview origins, required the reviewed head/base pair before PR creation, made local database locking fail closed, and separated PostgreSQL passwords from connection URLs. Node 24, pinned dependencies/base image, contributor guidance and CI are prepared. Local validation of the reviewed runtime passed; GitHub CI has not run for that commit. See [validation](VALIDATION.md#reviewed-private-main).
 
@@ -14,14 +14,17 @@ The intended initial release is an experimental project users run on their own c
 
 The [clean-checkout test](VALIDATION.md#clean-checkout-local-live-acceptance) passed the guided configuration flow, real GitHub sign-in, E2B provisioning, Codex device login/useful output, scoped Git writes, published-work review, reconnect and manual cleanup. Official Cloudflare Quick Tunnel worked when ngrok's account quota blocked requests. The [setup guide](FIRST-RUN.md) now documents that fallback and deliberate hostname/callback migration. The wizard itself still displays ngrok wording; automatic tunnel selection or callback migration is not implemented.
 
-## Remaining local source-release blockers
+## Local source publication status
 
-- Obtain the owner's explicit authorization to change the existing private repository to public. Private repository creation and the reviewed push to `main` are complete; they do not authorize public visibility. MIT licensing is selected; preserve its copyright and permission notice. Keep `package.json` private to prevent accidental npm publication.
-- Establish and test a private security contact; contact setup is deliberately pending. See [SECURITY](../SECURITY.md) and the [support draft](SUPPORT.md).
-- Review the exact sanitized publication commit and run its redacted full-history/candidate scan. The reviewed private `main` passed local checks and its exact-commit scan; later edits need their own scan. GitHub CI remains pending at the owner's request. Run it when authorized, then configure required checks, branch protection and available repository security controls before announcement.
-- Publish only this reviewed history. Do not attach an original-history bundle, private evidence, operational files, or local editor refs.
+The owner authorized public source visibility and GitHub private vulnerability reporting on 2026-10-16. The reporting setting and public entry point were verified; see [SECURITY](../SECURITY.md) for the route and verification limits. No separate support email or response-time promise is active.
 
-These gates still apply even when users supply their own cloud accounts. MIT licensing resolves the license choice; it does not authorize publication. The README's request for visible credit is optional and adds no license condition. Documentation edits require another final exact-commit review/scan; a previous clean result does not cover a later commit. This checklist does not authorize a visibility change, tag, release, npm publication or paid hosting.
+Publish only this reviewed history. Preserve the MIT copyright and permission notice; the README's visible-credit request is optional. Keep `package.json` private to prevent accidental npm publication. Do not attach original-history bundles, private evidence, operational files, or local editor refs.
+
+Run a redacted full-history/candidate scan on the exact commit after any edits. Local validation of the reviewed runtime is recorded in [validation](VALIDATION.md#reviewed-private-main); documentation-only publication changes do not establish new live integration results.
+
+GitHub CI remains pending by explicit owner choice. The CI workflow is disabled manually to prevent push, pull-request and scheduled runs until the owner requests resumption. No hosted-CI success or branch-protection guarantee is claimed. When CI is resumed, verify the workflows before relying on required checks; maintainer/repository protection controls remain a separate follow-up.
+
+Public source visibility does not activate hosted support/retention policies, deploy a service, create a GitHub release/tag, publish to npm, or authorize paid hosting.
 
 ## Local pilot limitations to disclose
 
@@ -39,6 +42,6 @@ The current backend needs a continuously running Node container with Git subproc
 
 The [hosted acceptance procedure](HOSTED-ACCEPTANCE.md) requires real wildcard DNS/TLS, private viewer isolation/HMR, full-duration expiry, process-crash recovery, provider absence and independent former-token rejection on the chosen host. Local simulation and container smoke tests do not satisfy those gates.
 
-Retention and support drafts are prepared, with activation and a tested contact still pending. The product has no general account/content deletion feature or scheduled content purge. [Current retention and proposed policy](RETENTION.md) distinguishes implemented behavior from the proposed operating policy.
+Hosted retention and support drafts are prepared, with activation and a tested support/deletion contact still pending. Source vulnerability reports use the active private GitHub route. The product has no general account/content deletion feature or scheduled content purge. [Current retention and proposed policy](RETENTION.md) distinguishes implemented behavior from the proposed operating policy.
 
 Remote ChatGPT/Codex revocation remains unverified. The current VM-local Codex login is not an implementation of the separately documented application OAuth revocation flow. Do not mark its cleanup result confirmed without implementation-specific proof. Preserve the invite allowlist, singleton operation, bounded lifetimes and explicit cleanup uncertainty.

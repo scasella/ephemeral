@@ -2,7 +2,7 @@
 
 ## Unreleased — initial pilot publication candidate
 
-The project uses the MIT License with copyright credited to scasella. The sanitized source and reviewed fixes are committed to `main` in the private `scasella/ephemeral` repository. Public publication and GitHub CI remain pending. No GitHub release, npm package, or hosted deployment is represented by this entry.
+The project uses the MIT License with copyright credited to scasella. The sanitized source and reviewed fixes are public on `main` at [scasella/ephemeral](https://github.com/scasella/ephemeral). GitHub private vulnerability reporting is enabled; see [SECURITY](SECURITY.md). GitHub CI remains pending at the owner’s request and its workflow is paused. No GitHub release, npm package, or hosted deployment is represented by this entry.
 
 - MIT licensing: retained copyright/license notice required, with an optional request for visible project credit and matching package metadata. No additional attribution condition or npm publication is introduced.
 - Network entry hardening: terminal and Preview upgrades handle socket resets during authorization and stop abandoned handshakes; live startup requires production serving, and control-plane URLs use canonical origins with strict input validation. Local regression tests cover reset survival, cancellation, capacity recovery and startup boundaries.
@@ -21,7 +21,7 @@ The project uses the MIT License with copyright credited to scasella. The saniti
 - Final review fixes: share Unicode shell-name validation between browser and server, apply selected operator PostgreSQL credentials/TLS defaults, and recheck local session authority after final PR preflight. Docker accepts only build inputs and recursively excludes private configuration/data; synthetic context export and real PostgreSQL recovery checks cover these boundaries. Contributor prerequisites now include Python 3.
 
 - Publication privacy: fresh noreply-attributed history, private evidence retained outside the public tree, synthetic examples, explicit disposable smoke-fixture selection, and no editor snapshot refs.
-- Hosting preparation: Sites compatibility assessment, host-specific acceptance procedure and explicit retention/support drafts with contact setup pending.
+- Hosting preparation: Sites compatibility assessment, host-specific acceptance procedure and explicit retention/hosted-support drafts. Hosted contact setup and policy activation remain pending; source vulnerability reports use GitHub private reporting.
 - Local onboarding: resumable first-run guide for private configuration, ngrok, personal GitHub App registration/selected-repository installation, and confirmed E2B template builds; read-only diagnostics and isolated local live launch.
 - Local setup documentation: verified Cloudflare Quick Tunnel fallback, coordinated hostname/callback restart steps, Node/npm wrapper troubleshooting, fresh Codex login/reconnect guidance, and a sanitized clean-checkout acceptance report with remaining local release gates.
 
@@ -30,7 +30,7 @@ The project uses the MIT License with copyright credited to scasella. The saniti
 - Explicit reusable setup recipes, pushed-change review, draft PR handoff, saved-work continuation, and revisioned next-session notes.
 - Private application previews with readiness diagnostics, proven local React/Vite HMR, and a four-step startup/access sequence.
 - Release hardening: a different browser origin for every preview generation; host-bound handoffs and grants; required reviewed head/base commit IDs before PR creation; fail-closed local database locks; PostgreSQL passwords passed separately from Compose connection URLs.
-- Publication scaffolding: tests/build/dependency/secret/container CI jobs, pinned actions and Node image, contributor guidance, issue templates, and a security policy that records pending private reporting.
+- Publication scaffolding: tests/build/dependency/secret/container CI jobs, pinned actions and Node image, contributor guidance, issue templates, and a security policy linking the enabled GitHub private reporting route.
 - Repeatable Docker smoke suite for production assets/authentication, privilege drop, mounted-disk persistence, PostgreSQL locking, restart and shutdown; verified locally on arm64 and emulated amd64.
 
 ### Compatibility notes

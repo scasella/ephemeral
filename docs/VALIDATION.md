@@ -4,7 +4,7 @@ This public summary omits private test-repository names, PR links, resource iden
 
 ## Reviewed private main
 
-The sanitized source and reviewed fixes were merged into `main` in the private `scasella/ephemeral` repository at `c4dfb8659a3e25fdc068a05a5a50c923a31ef220`. Public publication and GitHub CI remain pending. The CI-skip marker on that commit prevented the private pushes from starting GitHub CI; no hosted-CI result is claimed.
+The sanitized source and reviewed fixes were merged into `main` in the private `scasella/ephemeral` repository at `c4dfb8659a3e25fdc068a05a5a50c923a31ef220`. The repository was subsequently made public with private vulnerability reporting enabled on 2026-10-16. GitHub CI remains pending and its workflow is paused. The CI-skip marker on that runtime commit prevented its private pushes from starting GitHub CI; no hosted-CI result is claimed.
 
 Local verification of that exact runtime candidate passed:
 

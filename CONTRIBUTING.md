@@ -1,6 +1,6 @@
 # Contributing
 
-The sanitized source and reviewed fixes are committed to `main` in the private GitHub repository `scasella/ephemeral`. Public publication and GitHub CI remain pending. The `package.json` repository URL identifies that repository; its `private: true` setting prevents npm publication and does not control GitHub visibility. The project is licensed under [MIT](LICENSE); preserve its copyright and permission notice when redistributing copies or substantial portions. No separate contributor agreement is supplied by this guide.
+The sanitized source and reviewed fixes are public on `main` at [scasella/ephemeral](https://github.com/scasella/ephemeral). GitHub CI remains pending at the owner’s request; its workflow is paused, including scheduled and pull-request runs. Continue to run the local checks below; no hosted-CI result is claimed. The `package.json` repository URL identifies that repository; its `private: true` setting prevents npm publication and does not control GitHub visibility. The project is licensed under [MIT](LICENSE); preserve its copyright and permission notice when redistributing copies or substantial portions. No separate contributor agreement is supplied by this guide.
 
 ## Local setup
 
@@ -64,4 +64,4 @@ Keep changes focused and explain the user-visible problem, resulting behavior, a
 
 This version supports an invite-only pilot with one control-plane instance and one active machine per user. It is not a security-audited public multi-tenant service. Cleanup and credential revocation can fail and must remain visible. Remote OpenAI authorization revocation remains unverified. Consult the [architecture](docs/ARCHITECTURE.md) and operational limits in the [README](README.md) before changing these boundaries.
 
-After publication, use the issue and pull-request templates for ordinary defects and proposals. Review all screenshots and diagnostics for secrets and private repository data before attaching them. Handle suspected vulnerabilities through [SECURITY.md](SECURITY.md), rather than a public issue.
+Use the issue and pull-request templates for ordinary defects and proposals. Review all screenshots and diagnostics for secrets and private repository data before attaching them. Handle suspected vulnerabilities through [SECURITY.md](SECURITY.md), rather than a public issue.

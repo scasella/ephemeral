@@ -1,6 +1,6 @@
 # First run: real E2B sessions from your computer
 
-This setup runs the control plane on your own computer and coding sessions in your E2B account. It needs no hosted application service or domain purchase. It is separate from `npm run local`, which always runs simulation. The project is licensed under [MIT](../LICENSE). Its sanitized source and reviewed fixes are on `main` in the private `scasella/ephemeral` repository; public publication and GitHub CI remain pending.
+This setup runs the control plane on your own computer and coding sessions in your E2B account. It needs no hosted application service or domain purchase. It is separate from `npm run local`, which always runs simulation. The project is licensed under [MIT](../LICENSE). Its sanitized source and reviewed fixes are public on `main` at [scasella/ephemeral](https://github.com/scasella/ephemeral). GitHub CI remains pending at the owner’s request; its workflow is paused.
 
 ## Start the guide
 
@@ -119,4 +119,4 @@ The build uses the `ephemeral-codex` template alias. If that alias already serve
 
 The optional application Preview viewer is disabled in the initial configuration. Enabling it requires its own separate viewer-origin setup; it is not enabled by exposing the control plane. See [Preview configuration](RELEASE.md#private-preview-migration).
 
-No security support address or content-retention commitment is active yet. See [security status](../SECURITY.md), [support draft](SUPPORT.md) and [retention draft](RETENTION.md). Treat this as an experimental local project, not an operated public service.
+Use [GitHub private vulnerability reporting](https://github.com/scasella/ephemeral/security/advisories/new) for suspected security issues. There is no separate support email, response-time guarantee or hosted content-retention commitment. See [security guidance](../SECURITY.md), [hosted support draft](SUPPORT.md) and [retention draft](RETENTION.md). Treat this as an experimental local project, not an operated public service.
