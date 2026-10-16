@@ -67,7 +67,7 @@ In **Notes**, select **Edit note** and fill in **Next step**, **Unresolved issue
 
 Unsaved drafts stay only in memory across detail tabs and views for the selected machine; reload or machine selection can discard them. Notes do not save code, prove verification, or send instructions to Codex. Keep credentials out of all three fields.
 
-In live mode, **Continue saved work** reviews a verified published commit and the saved note before creating a fresh machine. It captures that note revision as an inherited copy; later edits to the source cannot change it. This continuation flow is unavailable in simulation. See the [full workflow and recovery limits](../README.md#workflow).
+In live mode, **Continue saved work** reviews a verified published commit and the saved note before creating a fresh machine. It captures that note revision as an inherited copy; later edits to the source cannot change it. This continuation flow is unavailable in simulation. See the [full workflow and recovery limits](REFERENCE.md#workflow).
 
 ## Find earlier work
 

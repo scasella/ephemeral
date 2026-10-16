@@ -3,7 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "Disposable cloud coding sessions with scoped GitHub access; invite-only pilot.",
+  "description": "Self-hosted disposable cloud coding workspaces for OpenAI Codex: fresh E2B microVMs, branch-scoped GitHub access and inspectable cleanup.",
+  "keywords": [
+    "codex",
+    "openai-codex",
+    "ai-coding-agent",
+    "e2b",
+    "microvm",
+    "sandbox",
+    "ephemeral-environments",
+    "cloud-development-environment",
+    "remote-development",
+    "github-app",
+    "self-hosted",
+    "developer-tools"
+  ],
+  "homepage": "https://github.com/scasella/ephemeral#readme",
+  "bugs": {
+    "url": "https://github.com/scasella/ephemeral/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/scasella/ephemeral.git"

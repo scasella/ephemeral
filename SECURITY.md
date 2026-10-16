@@ -6,7 +6,7 @@ Ephemeral is an experimental, locally runnable project licensed under [MIT](LICE
 
 GitHub private vulnerability reporting is the project's security-reporting route. No separate support/security email address is published. [Hosted support](docs/SUPPORT.md) and [retention](docs/RETENTION.md) remain drafts; neither establishes a staffed response commitment or implemented content-purge service.
 
-The supported deployment has one control-plane instance, an explicit GitHub account allowlist, and one active machine per user. Local simulation does not perform provider or cleanup operations. Local tests cannot establish the security of real upstream integrations. Before operating real sessions, review the [architecture](docs/ARCHITECTURE.md), [live testing guide](docs/LOCAL-LIVE.md), and the README's [cleanup semantics](README.md#cleanup-semantics) and [operational limits](README.md#operational-limits).
+The supported deployment has one control-plane instance, an explicit GitHub account allowlist, and one active machine per user. Local simulation does not perform provider or cleanup operations. Local tests cannot establish the security of real upstream integrations. Before operating real sessions, review the [architecture](docs/ARCHITECTURE.md), [live testing guide](docs/LOCAL-LIVE.md), and the reference's [cleanup semantics](docs/REFERENCE.md#cleanup-semantics) and [operational limits](docs/REFERENCE.md#operational-limits).
 
 VM destruction removes remaining local credential files, but does not establish that copied credentials were invalidated upstream. Remote OpenAI account-token revocation is unverified. A cleanup request is not proof of cleanup; unresolved failures require operator reconciliation.
 
