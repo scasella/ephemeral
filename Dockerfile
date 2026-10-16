@@ -8,6 +8,7 @@ COPY tsconfig.json vite.config.ts index.html ./
 COPY server ./server
 COPY shared ./shared
 COPY src ./src
+COPY public/appearance.js ./public/appearance.js
 COPY tests ./tests
 COPY scripts ./scripts
 COPY sandbox ./sandbox

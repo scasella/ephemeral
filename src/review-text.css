@@ -1,1 +1,1 @@
-.review-text-warning { display:block; margin:4px 0; padding:5px 8px; border-left:3px solid #8b6226; background:#fff6df; color:#68470f; font-size:12px; line-height:1.6; white-space:normal; overflow-wrap:anywhere; unicode-bidi:isolate; direction:ltr; }
+.review-text-warning { display:block; margin:4px 0; padding:5px 8px; border-left:3px solid var(--warning-border); background:var(--warning-surface); color:var(--warning-text); font-size:12px; line-height:1.6; white-space:normal; overflow-wrap:anywhere; unicode-bidi:isolate; direction:ltr; }

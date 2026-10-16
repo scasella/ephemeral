@@ -148,7 +148,9 @@ describe('startup HTTP and terminal boundary', () => {
     await vi.waitFor(() => expect(stubs.connect).toHaveBeenCalled());
     await live.repo.update({ ...s, state: 'ended' }); resolveConnection(attachedConnection);
     await failedReady;
-    expect(attachedConnection.disconnect).toHaveBeenCalled(); expect((await get(s.id)).firstTerminalAttachedAt).toBeNull();
+    // Socket close can precede the provider's asynchronous cleanup continuation.
+    await vi.waitFor(() => expect(attachedConnection.disconnect).toHaveBeenCalled());
+    expect((await get(s.id)).firstTerminalAttachedAt).toBeNull();
   });
 
   it('keeps a successful terminal usable when timestamp persistence fails', async () => {

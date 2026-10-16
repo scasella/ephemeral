@@ -6,12 +6,31 @@ Disposable cloud coding sessions: a fresh microVM, a fresh ChatGPT/Codex sign-in
 
 *Local simulation with synthetic repositories; no VM, model response or credentials. [Screenshot-led usage guide](docs/USAGE.md).*
 
+## Light and dark mode
+
+Choose **Appearance → System / Light / Dark** in the header. System follows your device. Your choice is saved in this browser and synchronized across tabs; both terminals update without reconnecting or clearing their output. Click any screenshot for the full-size view.
+
+| Light workspace | Dark workspace |
+| --- | --- |
+| [![Light workspace with machine details, shell tabs and the simulated Codex terminal](docs/media/appearance-workspace-light.png)](docs/media/appearance-workspace-light.png) | [![Dark workspace with matching machine details, shell tabs and the simulated Codex terminal](docs/media/appearance-workspace-dark.png)](docs/media/appearance-workspace-dark.png) |
+
+| Light terminal focus mode | Dark terminal focus mode |
+| --- | --- |
+| [![Light focused terminal with readable controls and explicitly simulated shell output](docs/media/appearance-terminal-light.png)](docs/media/appearance-terminal-light.png) | [![Dark focused terminal with matching controls and explicitly simulated shell output](docs/media/appearance-terminal-dark.png)](docs/media/appearance-terminal-dark.png) |
+
+| Light launch dialog | Dark launch dialog |
+| --- | --- |
+| [![Light launch dialog with a synthetic repository, main branch and one-hour lifetime](docs/media/appearance-launch-light.png)](docs/media/appearance-launch-light.png) | [![Dark launch dialog with the same synthetic repository, main branch and one-hour lifetime](docs/media/appearance-launch-dark.png)](docs/media/appearance-launch-dark.png) |
+
+*Matching captures from local simulation with synthetic data. No real compute, account credentials or model responses. Applications opened through Preview control their own appearance. [Media provenance](docs/media/README.md).*
+
 ## See the workflow
 
 Launch from a repository, keep Codex and a second shell within reach, save next-session notes, and inspect cleanup when the machine ends.
 
 | Task | Walkthrough |
 | --- | --- |
+| Choose light, dark or system appearance | [Appearance settings](docs/USAGE.md#choose-your-appearance) |
 | Choose a repository and start a machine | [Launch](docs/USAGE.md#launch-a-machine) |
 | Switch shells, enlarge the terminal and search output | [Terminal controls](docs/USAGE.md#keep-codex-and-a-second-shell-within-reach) |
 | Save context for the next session | [Handoff notes](docs/USAGE.md#save-a-next-session-handoff) |

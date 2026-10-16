@@ -5,21 +5,21 @@
 .terminal-enhanced .terminal-connection .text-button { font-size: 11px; }
 .terminal-font-controls, .terminal-view-controls { display: flex; align-items: center; gap: 6px; }
 .terminal-font-controls > span { min-width: 38px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
-.terminal-toolbar .terminal-font-controls button, .terminal-toolbar .terminal-view-controls button, .terminal-find button { min-height: 32px; border: 1px solid #cececa; border-radius: 3px; background: #fff; padding: 5px 10px; color: #333; font-size: 11px; }
-.terminal-toolbar .terminal-font-controls button:hover:not(:disabled), .terminal-toolbar .terminal-view-controls button:hover:not(:disabled), .terminal-find button:hover:not(:disabled) { background: #eeeeea; border-color: #92928b; }
-.terminal-enhanced button:focus-visible, .terminal-find input:focus-visible { outline: 2px solid #465d3e; outline-offset: 2px; }
-.terminal-context { display: flex; flex-wrap: wrap; gap: 8px 20px; padding: 10px 18px; border-bottom: 1px solid #e2e2e2; font-size: 11px; line-height: 1.6; color: #555; }
+.terminal-toolbar .terminal-font-controls button, .terminal-toolbar .terminal-view-controls button, .terminal-find button { min-height: 32px; border: 1px solid var(--control-border); border-radius: 3px; background: var(--surface); padding: 5px 10px; color: var(--text); font-size: 11px; }
+.terminal-toolbar .terminal-font-controls button:hover:not(:disabled), .terminal-toolbar .terminal-view-controls button:hover:not(:disabled), .terminal-find button:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-strong); }
+.terminal-enhanced button:focus-visible, .terminal-find input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.terminal-context { display: flex; flex-wrap: wrap; gap: 8px 20px; padding: 10px 18px; border-bottom: 1px solid var(--border); font-size: 11px; line-height: 1.6; color: var(--text); }
 .terminal-context span { min-width: 0; overflow-wrap: anywhere; }
-.terminal-context strong { font-weight: 500; color: #333; }
-.terminal-context time { font-variant-numeric: tabular-nums; color: #333; }
-.terminal-find { padding: 12px 18px; background: #f5f5f1; border-bottom: 1px solid #d8d8d0; }
+.terminal-context strong { font-weight: 500; color: var(--text); }
+.terminal-context time { font-variant-numeric: tabular-nums; color: var(--text); }
+.terminal-find { padding: 12px 18px; background: var(--surface-muted); border-bottom: 1px solid var(--border); }
 .terminal-find-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .terminal-find-row label { font-size: 11px; }
-.terminal-find-row input { flex: 1; min-width: 130px; min-height: 34px; border: 1px solid #cececa; border-radius: 3px; padding: 6px 9px; background: #fff; color: #252525; font-size: 12px; }
-.terminal-find-info { display: flex; justify-content: space-between; gap: 8px 20px; flex-wrap: wrap; padding-top: 9px; font-size: 11px; color: #595952; line-height: 1.6; }
-.terminal-find-info > span:first-child { color: #333; }
+.terminal-find-row input { flex: 1; min-width: 130px; min-height: 34px; border: 1px solid var(--control-border); border-radius: 3px; padding: 6px 9px; background: var(--surface); color: var(--text-strong); font-size: 12px; }
+.terminal-find-info { display: flex; justify-content: space-between; gap: 8px 20px; flex-wrap: wrap; padding-top: 9px; font-size: 11px; color: var(--text); line-height: 1.6; }
+.terminal-find-info > span:first-child { color: var(--text); }
 .terminal-enhanced .terminal-help { padding: 7px 12px; font-size: 11px; }
-.terminal-expanded { position: fixed; inset: 16px; z-index: 100; display: flex; flex-direction: column; box-shadow: 0 0 0 30px #f8f8f8e8, 0 12px 50px #0002; overflow: hidden; }
+.terminal-expanded { position: fixed; inset: 16px; z-index: 100; display: flex; flex-direction: column; box-shadow: 0 0 0 30px var(--focus-scrim), 0 12px 50px var(--shadow); overflow: hidden; }
 .terminal-expanded .terminal-host { flex: 1; min-height: 80px; height: auto; }
 .terminal-expanded > :not(.terminal-host) { flex-shrink: 0; }
 .terminal-expanded .terminal-footer { font-size: 10px; }

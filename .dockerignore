@@ -6,6 +6,7 @@
 !tsconfig.json
 !vite.config.ts
 !index.html
+!public/appearance.js
 !server/**/*.ts
 !shared/**/*.ts
 !src/**/*.ts

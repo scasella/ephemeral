@@ -2,7 +2,7 @@
 .session-activity [aria-disabled=true]{opacity:.6;cursor:default}
 .session-activity .activity-observation,.session-activity .activity-error{font-size:12px;line-height:1.8;margin-bottom:16px;overflow-wrap:anywhere}
 .session-activity .activity-observation p+p{margin-top:5px}
-.session-activity .activity-error{padding:12px;border:1px solid #c6c6c0;background:#f1f1ee}
+.session-activity .activity-error{padding:12px;border:1px solid var(--border);background:var(--surface-muted)}
 .session-activity .event-row{grid-template-columns:10px 140px minmax(0,1fr)}
 .session-activity .event-row p{white-space:pre-wrap;overflow-wrap:anywhere}
 @media(max-width:760px){.session-activity .event-row{grid-template-columns:10px minmax(0,1fr)}.session-activity .event-row time,.session-activity .event-row>div{grid-column:2}.session-activity .activity-navigation .button{font-size:12px}}

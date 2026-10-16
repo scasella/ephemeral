@@ -1,5 +1,5 @@
 .ended-outcome{display:grid;gap:16px;font-size:14px;line-height:1.65}
-.recovery-compute{padding:12px;border:1px solid var(--line);background:#f3f3f3}
+.recovery-compute{padding:12px;border:1px solid var(--line);background:var(--surface-muted)}
 .recovery-evidence-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .recovery-evidence{min-width:0;border:1px solid var(--line);padding:12px}
 .recovery-evidence h4,.recovery-cleanup h4{font-size:14px;margin:0 0 8px;font-weight:600}
@@ -14,7 +14,7 @@
 .recovery-check-time{color:var(--muted);font-size:12px}
 .recovery-evidence .text-button,.recovery-cleanup .text-button{margin-top:10px}
 .recovery-cleanup>p{margin-bottom:8px}
-.cleanup-evidence .remote-codex-result{border-top:1px solid var(--line);background:#f3f3f3;min-height:48px;font-size:inherit;padding:12px}
+.cleanup-evidence .remote-codex-result{border-top:1px solid var(--line);background:var(--surface-muted);min-height:48px;font-size:inherit;padding:12px}
 .cleanup-evidence .remote-codex-result strong{font-weight:600}
 .cleanup-evidence .cleanup-observation{font-size:12px;color:var(--muted);margin-bottom:8px}
 .cleanup-evidence .cleanup-row,.cleanup-evidence .cleanup-status{font-size:14px}

@@ -10,11 +10,11 @@ export async function checkDockerContext() {
   const root = await mkdtemp(join(tmpdir(), 'ephemeral-context-test-'));
   const context = join(root, 'context'), destination = join(root, 'export');
   // Include a direct child and a nested child for every admitted source tree.
-  const allowed = ['package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts', 'index.html',
+  const allowed = ['package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts', 'index.html', 'public/appearance.js',
     ...['server', 'shared', 'src', 'tests', 'scripts', 'sandbox'].flatMap(dir => [`${dir}/fixture.ts`, `${dir}/nested/fixture.ts`]),
     'src/nested/fixture.tsx', 'src/nested/fixture.css'];
   const denied = ['.env', '.env.local', '.data/fixture.ts', '.git/config', 'private.pem', 'credentials.json',
-    'docs/private.md', 'private/notes.txt', 'node_modules/fixture.ts', 'dist/fixture.ts',
+    'public/private.js', 'public/credentials.json', 'public/.env', 'docs/private.md', 'private/notes.txt', 'node_modules/fixture.ts', 'dist/fixture.ts',
     ...['server', 'shared', 'src', 'tests', 'scripts', 'sandbox'].flatMap(dir => [
       `${dir}/nested/.env`, `${dir}/nested/.env.local`, `${dir}/nested/private.pem`, `${dir}/nested/private.key`,
       `${dir}/nested/private.p12`, `${dir}/nested/private.pfx`, `${dir}/nested/private.log`, `${dir}/nested/credentials.json`,

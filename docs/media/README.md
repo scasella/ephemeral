@@ -1,6 +1,6 @@
 # Documentation media
 
-These assets were captured on 2026-10-16 from the actual Ephemeral UI at application revision `d5e347236885ddb09b135e9bdda156815dbac2cc`. Only documentation and media changed during capture. See the [illustrated usage guide](../USAGE.md).
+The original workflow-tour assets were captured on 2026-10-16 from the actual Ephemeral UI at application revision `d5e347236885ddb09b135e9bdda156815dbac2cc`. Only documentation and media changed during that capture. See the [illustrated usage guide](../USAGE.md).
 
 All captures use **local simulation** with an isolated embedded database, a clean browser profile and dotenv loading disabled. No E2B, GitHub or OpenAI account credentials were supplied, no real machine was created, and no commands or model requests were executed. Repositories, task names, branch IDs and note text are synthetic. Cleanup outcomes in these images are simulated; remote Codex revocation remains unverified.
 
@@ -15,7 +15,19 @@ All captures use **local simulation** with an isolated embedded database, a clea
 | [terminal-workflow.gif](terminal-workflow.gif) | Find in focus mode, then switching between Codex and a supplemental shell |
 | [notes-workflow.gif](notes-workflow.gif) | Editing, saving and reloading a handoff note |
 
-The six PNGs are browser screenshots. History is a screenshot of its panel; the others show a browser viewport. The two looping GIFs are real browser recordings, reduced to 1200 × 833 at four frames per second with a 32-color palette. Their roughly 10–11 second duration includes reading pauses. They are illustrative walkthroughs, not performance measurements. Written steps and static alternatives accompany both GIFs; animation is collapsed by default in the docs.
+## Appearance comparisons
+
+The six appearance screenshots below were captured on 2026-10-16 from the dark-mode implementation committed alongside these assets, based on reviewed `main` at `90c4db0290f5ddbbc77b1f7100c59432426f92c1`. They use a fresh isolated simulation, the production-built interface, and a clean Chrome profile without integration credentials. Each pair shows the same task and interface state with only the appearance changed. The synthetic machine was stopped after capture. Terminal text is the app's actual simulation notice, not a model response or executed command.
+
+| Light | Dark | Shows |
+| --- | --- | --- |
+| [appearance-workspace-light.png](appearance-workspace-light.png) | [appearance-workspace-dark.png](appearance-workspace-dark.png) | Full workspace, appearance selector, machine details and two shell tabs |
+| [appearance-terminal-light.png](appearance-terminal-light.png) | [appearance-terminal-dark.png](appearance-terminal-dark.png) | Focused supplemental terminal and readable controls |
+| [appearance-launch-light.png](appearance-launch-light.png) | [appearance-launch-dark.png](appearance-launch-dark.png) | Matching repository/base-branch launch dialogs |
+
+Workspace captures use a 1440-pixel-wide full page, terminal captures use a 1440 × 800 viewport, and launch captures show only the actual dialog. These are unaltered browser PNG screenshots. The README displays each pair side by side and links to full-size originals.
+
+The original six workflow-tour PNGs are browser screenshots. History is a screenshot of its panel; the others show a browser viewport. The two looping GIFs are real browser recordings, reduced to 1200 × 833 at four frames per second with a 32-color palette. Their roughly 10–11 second duration includes reading pauses. They are illustrative walkthroughs, not performance measurements. Written steps and static alternatives accompany both GIFs; animation is collapsed by default in the docs.
 
 ## Refreshing the captures
 

@@ -375,8 +375,17 @@ it('crosses real readiness, application assets, Vite HMR and grant revocation bo
   expect((await nativeFetch(`${api}/@vite/client`)).status).toBe(404);
   const frontend = await nativeFetch(api).then(response => response.text());
   expect(frontend).not.toContain('/src/');
-  const modulePath = frontend.match(/<script[^>]+src="([^"]+)"/)?.[1];
-  if (modulePath) { expect(modulePath).toMatch(/^\/assets\//); expect((await nativeFetch(new URL(modulePath, api))).status).toBe(200); }
+  const modulePath = frontend.match(/<script\b(?=[^>]*\btype="module")[^>]*\bsrc="([^"]+)"/)?.[1];
+  if (modulePath) {
+    expect(modulePath).toMatch(/^\/assets\//);
+    expect((await nativeFetch(new URL(modulePath, api))).status).toBe(200);
+    // Appearance is a separate blocking script so it can set the theme before React or styles paint.
+    expect(frontend.indexOf('<script src="/appearance.js"></script>')).toBeGreaterThanOrEqual(0);
+    expect(frontend.indexOf('/appearance.js')).toBeLessThan(frontend.indexOf(modulePath));
+    const appearance = await nativeFetch(new URL('/appearance.js', api));
+    expect(appearance.status).toBe(200); expect(appearance.headers.get('content-type')).toContain('javascript');
+    expect(await appearance.text()).toContain('window.ephemeralAppearance');
+  }
   expect((await nativeFetch(`${api}/auth/github`, { redirect: 'manual' })).status).toBe(403);
   await expect(fetch('https://github.com/login/oauth/access_token', { method: 'POST' })).rejects.toThrow('External transport is disabled');
   expect((await nativeFetch(`${api}/__local_preview/start`, { method: 'POST', redirect: 'manual' })).status).toBe(403);

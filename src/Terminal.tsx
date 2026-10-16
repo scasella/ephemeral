@@ -1,3 +1,5 @@
+import { useAppearance } from './appearance';
+import { applyTerminalTheme, refreshTerminalSearch, terminalTheme, terminalSearchOptions } from './terminal-theme';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Terminal as XTerminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -22,7 +24,6 @@ export type TerminalProps = {
   unavailableReason?: string;
 };
 
-const SEARCH_OPTIONS = { decorations: { matchBackground: '#eee6be', matchBorder: '#b2a663', matchOverviewRuler: '#b2a663', activeMatchBackground: '#d4dcbf', activeMatchBorder: '#536843', activeMatchColorOverviewRuler: '#536843' } };
 const EMPTY_RESULTS: ISearchResultChangeEvent = { resultIndex: -1, resultCount: 0 };
 
 export function TerminalConnectionControls({ status, recovering, primary, onReconnect, onRecover }: {
@@ -32,6 +33,10 @@ export function TerminalConnectionControls({ status, recovering, primary, onReco
 }
 
 export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex', preview, visible = true, repository, branch, expiresAt, onStatusChange, onRecoverShell, recoveringShell = false, unavailableReason }: TerminalProps) {
+  const { resolved: appearance } = useAppearance();
+  const appearanceRef = useRef(appearance);
+  appearanceRef.current = appearance;
+  const searchOptions = terminalSearchOptions(appearance);
   const shell = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
@@ -71,7 +76,7 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
     setQuery(''); setResults(EMPTY_RESULTS); setFindOpen(false); setExpanded(false);
     let disposed = false;
     // Search result counts/highlights use xterm's proposed decoration API.
-    const terminal = new XTerminal({ allowProposedApi: true, disableStdin: true, screenReaderMode: true, cursorBlink: true, fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace', fontSize: fontSizeRef.current, lineHeight: 1.55, scrollback: 5000, theme: { background: '#ffffff', foreground: '#252525', cursor: '#252525', selectionBackground: '#dcdcd7', black: '#252525', brightBlack: '#777770', green: '#3e5b41', brightGreen: '#3e5b41' } });
+    const terminal = new XTerminal({ allowProposedApi: true, disableStdin: true, screenReaderMode: true, cursorBlink: true, fontFamily: '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace', fontSize: fontSizeRef.current, lineHeight: 1.55, scrollback: 5000, theme: terminalTheme(appearanceRef.current) });
     const fit = new FitAddon();
     const search = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
     terminal.loadAddon(fit);
@@ -187,12 +192,19 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
   }, [fontSize]);
 
   useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    applyTerminalTheme(terminal, appearance);
+    if (findOpen && query && searchRef.current) refreshTerminalSearch(terminal, searchRef.current, query, appearance);
+  }, [appearance]);
+
+  useEffect(() => {
     if (!findOpen) return;
     if (!query) {
       searchRef.current?.clearDecorations();
       setResults(EMPTY_RESULTS);
     } else {
-      searchRef.current?.findNext(query, { ...SEARCH_OPTIONS, incremental: true });
+      searchRef.current?.findNext(query, { ...searchOptions, incremental: true });
     }
   }, [query, findOpen]);
 
@@ -258,8 +270,8 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
       handled = true;
     } else if (event.key === 'Enter' && event.target === findInput.current) {
       if (query) {
-        if (event.shiftKey) searchRef.current?.findPrevious(query, SEARCH_OPTIONS);
-        else searchRef.current?.findNext(query, SEARCH_OPTIONS);
+        if (event.shiftKey) searchRef.current?.findPrevious(query, searchOptions);
+        else searchRef.current?.findNext(query, searchOptions);
       }
       handled = true;
     } else if (focused && event.key === 'Tab' && shell.current) {
@@ -297,8 +309,8 @@ export default function Terminal({ sessionId, shellId = 'codex', label = 'Codex'
       <div className="terminal-find-row">
         <label htmlFor={`${searchId}-input`}>Find</label>
         <input id={`${searchId}-input`} ref={findInput} value={query} onChange={event => setQuery(event.target.value)} onBlur={() => searchRef.current?.clearActiveDecoration()} aria-describedby={scopeId} placeholder="Search terminal output" autoComplete="off" spellCheck={false} />
-        <button type="button" onClick={() => searchRef.current?.findPrevious(query, SEARCH_OPTIONS)} disabled={!query} aria-label="Previous terminal match" title="Previous match (Shift+Enter)">Previous</button>
-        <button type="button" onClick={() => searchRef.current?.findNext(query, SEARCH_OPTIONS)} disabled={!query} aria-label="Next terminal match" title="Next match (Enter)">Next</button>
+        <button type="button" onClick={() => searchRef.current?.findPrevious(query, searchOptions)} disabled={!query} aria-label="Previous terminal match" title="Previous match (Shift+Enter)">Previous</button>
+        <button type="button" onClick={() => searchRef.current?.findNext(query, searchOptions)} disabled={!query} aria-label="Next terminal match" title="Next match (Enter)">Next</button>
         <button type="button" onClick={closeFind} aria-label="Close terminal Find" title="Close Find (Escape)">Close</button>
       </div>
       <div className="terminal-find-info"><span role="status" aria-live="polite">{searchResultLabel(query, results)}</span><span id={scopeId}>Current browser buffer only · tmux history is not searched · Enter / Shift+Enter</span></div>

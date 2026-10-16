@@ -13,6 +13,12 @@ npm run local
 
 Open http://localhost:4310. For real sessions, follow [guided first-run setup](FIRST-RUN.md) first; it includes private configuration, your tunnel, GitHub App and E2B template. A fresh real VM requires a fresh Codex device sign-in.
 
+## Choose your appearance
+
+Use **Appearance** in the header to choose **System**, **Light**, or **Dark**. System is the default and follows your device’s appearance. Your choice is saved in this browser and updates other open tabs on the same app address. If browser storage is unavailable, the choice lasts for the current page.
+
+The workspace and both terminal shells change together without reconnecting or clearing their output. Applications opened through Preview control their own appearance.
+
 ## Launch a machine
 
 1. Choose **New machine**.
