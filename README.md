@@ -57,6 +57,8 @@ Launch from a repository, keep Codex and a second shell within reach, save next-
 
 ## Release status
 
+The latest GitHub prerelease is [v0.1.1](https://github.com/scasella/ephemeral/releases/tag/v0.1.1), published on 2026-10-16 from reviewed `main` at `c05617a`. It adds dark mode and the screenshot comparisons above. [v0.1.0](https://github.com/scasella/ephemeral/releases/tag/v0.1.0) is the initial experimental local release. Published tags stay fixed; `main` may include later documentation updates.
+
 Ephemeral is an experimental, locally runnable project licensed under [MIT](LICENSE). The sanitized source and reviewed fixes are public on `main` at [scasella/ephemeral](https://github.com/scasella/ephemeral). **GitHub CI remains pending** at the owner’s request; its workflow is paused. Report vulnerabilities through [GitHub private reporting](https://github.com/scasella/ephemeral/security/advisories/new). No hosted public service has been deployed. The package setting `private: true` prevents accidental npm publication; it does not control GitHub repository visibility.
 
 The release review repaired cross-generation Preview isolation, enforced the reviewed head/base pair for PR creation, and hardened local database locking and Compose password handling. See [release readiness and remaining gates](docs/RELEASE-READINESS.md), [release notes](CHANGELOG.md), [contributor setup](CONTRIBUTING.md), and [security reporting status](SECURITY.md).

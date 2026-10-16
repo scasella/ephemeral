@@ -1,8 +1,17 @@
 # Release and publication procedure
 
-The owner authorized public source publication on 2026-10-16. The sanitized source and reviewed fixes are public on `main` at [scasella/ephemeral](https://github.com/scasella/ephemeral), with [private vulnerability reporting](../SECURITY.md) enabled. The owner selected the [MIT License](../LICENSE), with copyright credited to scasella. **GitHub CI remains pending** and its workflow is paused. This procedure does not authorize a hosted deployment, GitHub release/tag or package publication. Keep `package.json` private and do not run `npm publish`; that package setting does not control GitHub repository visibility.
+The owner authorized public source publication on 2026-10-16. The sanitized source and reviewed fixes are public on `main` at [scasella/ephemeral](https://github.com/scasella/ephemeral), with [private vulnerability reporting](../SECURITY.md) enabled. The owner selected the [MIT License](../LICENSE), with copyright credited to scasella. **GitHub CI remains pending** and its workflow is paused. The separately authorized GitHub prereleases are recorded below. This procedure does not authorize a hosted deployment, another release/tag or package publication. Keep `package.json` private and do not run `npm publish`; that package setting does not control GitHub repository visibility.
 
 Use only the separate sanitized publication checkout and its reviewed `main` history. Original history and private evidence are archived outside it. Never mirror-push the original repository, import its ancestors/editor refs, or attach private bundles and receipts to a release. Any future edits require a new exact-commit scan.
+
+## Published prereleases
+
+| Version | Published | Source commit | Changes |
+| --- | --- | --- | --- |
+| [v0.1.1](https://github.com/scasella/ephemeral/releases/tag/v0.1.1) | 2026-10-16 | `c05617a40311aa20826b618dd7dfe296a47b889a` | System/Light/Dark appearance, preserved terminal context and three light/dark screenshot pairs |
+| [v0.1.0](https://github.com/scasella/ephemeral/releases/tag/v0.1.0) | 2026-10-16 | `90c4db0290f5ddbbc77b1f7100c59432426f92c1` | Initial experimental local release and guided setup |
+
+Both releases are prereleases for local use. Their tags identify fixed source snapshots; subsequent documentation commits on `main` do not change those snapshots. The package remains private and no npm package or hosted service has been published. See the [versioned changelog](../CHANGELOG.md) and [v0.1.1 validation](VALIDATION.md#v011-appearance-release).
 
 ## Local candidate checks
 
@@ -31,11 +40,11 @@ npm run test:container
 
 The smoke runner needs only Node and Docker on the host; it does not install host dependencies or load `.env`. It tests packaged modules and assets, UID 1000/umask, mounted-disk repair and persistence, embedded database reopen, rejected startup configurations, production HTTP/authentication fences, a real PostgreSQL connection and singleton lock, restart, and graceful SIGTERM. It pulls `postgres:17-bookworm` if missing, generates test-only configuration, publishes no host ports, and blocks external container access with an internal Docker network. Its temporary containers, volumes, and network are removed on completion. Built/pulled images remain cached. Optional image arguments: `npm run test:container -- ephemeral:ci postgres:17-bookworm`.
 
-Local Docker validation passes; see [reviewed private-main validation](VALIDATION.md#reviewed-private-main) for current evidence and the historical reports for earlier platforms. CI is configured to run the same suite, but GitHub CI remains pending at the owner's request. The workflow is disabled manually; resume it only when requested. Prior private-main pushes used a CI-skip marker; they are not hosted-CI evidence. These tests use no real E2B/GitHub credentials and do not establish hosted lifecycle acceptance.
+Local Docker evidence is recorded by revision: [v0.1.1 appearance validation](VALIDATION.md#v011-appearance-release) covers its build, context filter and offline asset check; [reviewed private-main validation](VALIDATION.md#reviewed-private-main) records the earlier complete container smoke suite and platform scope. CI is configured to run the same suite, but GitHub CI remains pending at the owner's request. The workflow is disabled manually; resume it only when requested. Prior private-main pushes used a CI-skip marker; they are not hosted-CI evidence. These tests use no real E2B/GitHub credentials and do not establish hosted lifecycle acceptance.
 
 ## Private Preview migration
 
-The former single fixed viewer hostname allowed a loaded old application document to receive a later generation's host-wide cookie. The candidate gives every access generation a different hostname and binds handoff consumption, HTTP, and WebSocket authorization to it. The base hostname never serves application content.
+The former single fixed viewer hostname allowed a loaded old application document to receive a later generation's host-wide cookie. The current implementation gives every access generation a different hostname and binds handoff consumption, HTTP, and WebSocket authorization to it. The base hostname never serves application content.
 
 1. Stop active machines normally and resolve cleanup before upgrading. Keep the database and encryption key together. Back up the database before changing the sole control plane.
 2. If Preview is needed, configure `PREVIEW_PUBLIC_URL` as a canonical HTTPS **base DNS origin**, such as `https://preview.example.net`, with no trailing slash/path, credentials, query, or fragment. IP literals are rejected. The control-plane hostname must be outside this base's namespace.
@@ -61,7 +70,7 @@ Public source visibility and GitHub private reporting were authorized and config
 - Keep [GitHub private vulnerability reporting](https://github.com/scasella/ephemeral/security/advisories/new) enabled and the [security policy](../SECURITY.md) current. Check the reporting entry point after repository/permission changes; no separate inbox or report-delivery test is claimed.
 - Continue from reviewed `main` in `scasella/ephemeral`; do not create a replacement repository or import the original private history.
 - Keep CI pending until the owner requests resumption. The workflow is disabled manually, including scheduled and pull-request runs. When authorized, enable it, run all jobs (including containers), verify their results and configure appropriate branch/required-check protections. Available repository security controls and maintainer permissions remain separate follow-ups; do not claim they were configured by publishing source.
-- A GitHub tag/release needs a separate decision. Use the actual license and experimental limitations; do not label this a generally available hosted service or imply upstream Codex revocation is proven.
+- Keep published tags fixed. Later changes belong in new commits on `main`; a future GitHub tag/release needs a separate decision. Use the actual license and experimental limitations; do not label this a generally available hosted service or imply upstream Codex revocation is proven.
 
 Public source publication and hosted public access are separate decisions. A GitHub release must not apply `render.yaml`, expose listeners, spend money, build a paid E2B template, or invite accounts automatically. CI intentionally has no deployment/publishing credentials or steps.
 

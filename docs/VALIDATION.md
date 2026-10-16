@@ -2,6 +2,20 @@
 
 This public summary omits private test-repository names, PR links, resource identifiers, exact timelines and live screenshots. Unredacted historical evidence remains in private operator storage. No identifier or screenshot was replaced with invented evidence.
 
+## v0.1.1 appearance release
+
+The [v0.1.1 prerelease](https://github.com/scasella/ephemeral/releases/tag/v0.1.1) was published on 2026-10-16 from reviewed `main` at `c05617a40311aa20826b618dd7dfe296a47b889a`, with an annotated tag using the owner's GitHub noreply identity. The tag remains fixed; subsequent documentation updates can advance `main`. GitHub CI remains pending and its workflow is disabled manually. No hosted-CI result is claimed.
+
+Local validation of that exact appearance candidate passed:
+
+- 1,399 tests across 101 files, with one intentionally skipped interactive browser hold; TypeScript checking and the production build passed.
+- Production-built Chrome checks covered System/Light/Dark selection, first-paint appearance, reload persistence, cross-tab synchronization, OS changes, denied storage, both shells, terminal buffer/search/viewport/focus continuity, all workspace views, desktop/mobile layouts, notes, dialogs and ended-session feedback. No browser script errors, CSP violations or external requests were observed in the final walkthrough.
+- The Docker build passed. The context filter admitted 20 synthetic build inputs, including the exact appearance bootstrap, and excluded 97 private/unrelated fixtures. An offline, read-only, non-root container check confirmed the packaged bootstrap and compiled theme assets.
+- Six PNGs were captured from a fresh credential-free simulation and visually reviewed for disclosures; no text/EXIF metadata was present. Three paired README tables, image decoding, alt text, relative links and desktop/mobile layout were checked. See [media provenance](media/README.md).
+- Gitleaks 8.30.1 scanned the exact source commit, all nine reachable sanitized commits and 314 tracked candidate files with no configured rule matches. The release notes and annotated tag text were scanned separately with no findings. The published release body, fixed tag target, screenshot rendering and unchanged paused CI state were verified.
+
+These checks used synthetic account/provider adapters and disposable local resources. They did not repeat real E2B/GitHub/Codex acceptance, full-duration live expiry/crash/cleanup tests or the earlier complete container smoke suite below. Upstream Codex token revocation remains unverified. Documentation changes after this tag require a fresh exact-commit scan; they do not establish new runtime, hosted-CI or live-account acceptance.
+
 ## Reviewed private main
 
 The sanitized source and reviewed fixes were merged into `main` in the private `scasella/ephemeral` repository at `c4dfb8659a3e25fdc068a05a5a50c923a31ef220`. The repository was subsequently made public with private vulnerability reporting enabled on 2026-10-16. GitHub CI remains pending and its workflow is paused. The CI-skip marker on that runtime commit prevented its private pushes from starting GitHub CI; no hosted-CI result is claimed.

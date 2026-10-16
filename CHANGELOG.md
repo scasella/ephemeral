@@ -1,8 +1,22 @@
 # Changelog
 
-## Unreleased — initial pilot publication candidate
+## [v0.1.1](https://github.com/scasella/ephemeral/releases/tag/v0.1.1) — 2026-10-16 (prerelease)
 
-The project uses the MIT License with copyright credited to scasella. The sanitized source and reviewed fixes are public on `main` at [scasella/ephemeral](https://github.com/scasella/ephemeral). GitHub private vulnerability reporting is enabled; see [SECURITY](SECURITY.md). GitHub CI remains pending at the owner’s request and its workflow is paused. No GitHub release, npm package, or hosted deployment is represented by this entry.
+Experimental local release from reviewed `main` at `c05617a40311aa20826b618dd7dfe296a47b889a`. This tag remains fixed; later documentation updates can advance `main`.
+
+- Appearance: a persistent **System / Light / Dark** selector, available before sign-in and across workspace views. System follows the device; saved choices synchronize across browser tabs and remain usable without storage.
+- Shared light/dark styling covers workspace surfaces, forms, dialogs, session history, notes, setup, published review, Preview controls, service feedback and cleanup. The initial theme applies before paint under the production security policy; system monospace fonts remove the external font request.
+- Both terminals update ANSI colors, selection, cursor and search highlights in place, preserving connections, output, viewport, selected search match and keyboard continuity. Preview applications retain control over their own appearance.
+- Documentation: three matching light/dark screenshot pairs for the workspace, focused terminal and launch dialog, with full-size links, alt text, appearance instructions and synthetic-capture provenance.
+- Local validation: 1,399 tests passed across 101 files with one intentional interactive-hold skip; type checking, production build, desktop/mobile Chrome checks, Docker build, context filtering and offline non-root asset checks passed. The exact source commit, release text and reviewed screenshot disclosures were checked; the configured secret scan found no matches. See [validation scope](docs/VALIDATION.md#v011-appearance-release).
+
+GitHub CI remains pending and its workflow is paused. No new real E2B/GitHub/Codex acceptance or hosted deployment was performed for this appearance release. Remote ChatGPT/Codex token revocation remains unverified; [local limitations and hosted-launch gates](docs/RELEASE-READINESS.md) still apply.
+
+## [v0.1.0](https://github.com/scasella/ephemeral/releases/tag/v0.1.0) — 2026-10-16 (prerelease)
+
+Initial experimental local release from reviewed `main` at `90c4db0290f5ddbbc77b1f7100c59432426f92c1`.
+
+The project uses the MIT License with copyright credited to scasella. The sanitized source and reviewed fixes are public on `main` at [scasella/ephemeral](https://github.com/scasella/ephemeral). GitHub private vulnerability reporting is enabled; see [SECURITY](SECURITY.md). GitHub CI remains pending at the owner’s request and its workflow is paused. This entry records the initial GitHub prerelease; no npm package or hosted service was published.
 
 - MIT licensing: retained copyright/license notice required, with an optional request for visible project credit and matching package metadata. No additional attribution condition or npm publication is introduced.
 - Network entry hardening: terminal and Preview upgrades handle socket resets during authorization and stop abandoned handshakes; live startup requires production serving, and control-plane URLs use canonical origins with strict input validation. Local regression tests cover reset survival, cancellation, capacity recovery and startup boundaries.
@@ -35,4 +49,4 @@ The project uses the MIT License with copyright credited to scasella. The saniti
 
 ### Compatibility notes
 
-Private Preview now needs a base DNS origin and wildcard host routing. Existing fixed-host/IP viewer configuration must change before restarting with this candidate. Existing viewer tabs must be reopened. Local stale database locks require explicit operator inspection instead of automatic deletion. See [migration and release procedure](docs/RELEASE.md).
+Private Preview now needs a base DNS origin and wildcard host routing. Existing fixed-host/IP viewer configuration must change before upgrading from the former fixed-host implementation. Existing viewer tabs must be reopened. Local stale database locks require explicit operator inspection instead of automatic deletion. See [migration and release procedure](docs/RELEASE.md).
