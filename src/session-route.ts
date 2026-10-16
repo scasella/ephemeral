@@ -1,4 +1,4 @@
-export const machineTabs = ['terminal', 'changes', 'published', 'setup', 'preview', 'access', 'activity', 'notes', 'settings'] as const;
+export const machineTabs = ['terminal', 'files', 'changes', 'published', 'setup', 'preview', 'access', 'activity', 'notes', 'settings'] as const;
 export type MachineTab = typeof machineTabs[number];
 export function machineTabKey(key: string, current: MachineTab): MachineTab | null {
   const index = machineTabs.indexOf(current);

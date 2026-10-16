@@ -1,3 +1,5 @@
+import { isEnvironmentRef, type EnvironmentRef } from '../shared/environments';
+import { sameEnvironment } from './environment-selection';
 import type { Session } from './api';
 import { maxExpectedNoteRevision, validNote, type HandoffNote } from './handoff-notes';
 
@@ -7,6 +9,7 @@ export interface ContinuationPreview {
   repository: string; sourceBranch: string; baseBranch: string; commitSha: string | null;
 }
 export interface ContinuationIntent {
+  environment?: EnvironmentRef;
   sourceSessionId: string; expectedHeadSha: string; requestId: string; createdAt: string; expectedNoteRevision?: number; reviewedNote?: HandoffNote;
 }
 export const continuationPreviewMaxAge = 60_000;
@@ -32,7 +35,7 @@ export function readContinuationIntent(raw: string | null, sourceSessionId: stri
     const value: unknown = raw ? JSON.parse(raw) : null;
     if (!value || typeof value !== 'object') return null;
     const intent = value as ContinuationIntent;
-    return intent.sourceSessionId === sourceSessionId && typeof intent.expectedHeadSha === 'string' && shaPattern.test(intent.expectedHeadSha) && typeof intent.requestId === 'string' && uuidPattern.test(intent.requestId) && Number.isFinite(Date.parse(intent.createdAt)) && (intent.expectedNoteRevision === undefined || Number.isSafeInteger(intent.expectedNoteRevision) && intent.expectedNoteRevision >= 0 && intent.expectedNoteRevision <= maxExpectedNoteRevision) && (intent.reviewedNote === undefined || validNote(intent.reviewedNote) && intent.reviewedNote.revision === intent.expectedNoteRevision) ? intent : null;
+    return (intent.environment === undefined || isEnvironmentRef(intent.environment)) && intent.sourceSessionId === sourceSessionId && typeof intent.expectedHeadSha === 'string' && shaPattern.test(intent.expectedHeadSha) && typeof intent.requestId === 'string' && uuidPattern.test(intent.requestId) && Number.isFinite(Date.parse(intent.createdAt)) && (intent.expectedNoteRevision === undefined || Number.isSafeInteger(intent.expectedNoteRevision) && intent.expectedNoteRevision >= 0 && intent.expectedNoteRevision <= maxExpectedNoteRevision) && (intent.reviewedNote === undefined || validNote(intent.reviewedNote) && intent.reviewedNote.revision === intent.expectedNoteRevision) ? intent : null;
   } catch { return null; }
 }
 
@@ -47,10 +50,10 @@ export async function submitContinuation(source: Session, intent: ContinuationIn
     timer = setTimeout(() => { controller.abort(); reject(new ContinuationRequestError('The request timed out. Its outcome is uncertain; check the machine list or retry the same request.', false)); }, 45_000);
   });
   const request = async () => {
-    const response = await fetch(`/api/sessions/${encodeURIComponent(source.id)}/continue`, { method: 'POST', credentials: 'same-origin', signal: controller.signal, headers: { 'Content-Type': 'application/json', 'X-Ephemeral-Request': '1' }, body: JSON.stringify({ expectedHeadSha: intent.expectedHeadSha, requestId: intent.requestId, ...(intent.expectedNoteRevision === undefined ? {} : { expectedNoteRevision: intent.expectedNoteRevision }) }) });
+    const response = await fetch(`/api/sessions/${encodeURIComponent(source.id)}/continue`, { method: 'POST', credentials: 'same-origin', signal: controller.signal, headers: { 'Content-Type': 'application/json', 'X-Ephemeral-Request': '1' }, body: JSON.stringify({ expectedHeadSha: intent.expectedHeadSha, requestId: intent.requestId, ...(intent.environment ? { environment: intent.environment } : {}), ...(intent.expectedNoteRevision === undefined ? {} : { expectedNoteRevision: intent.expectedNoteRevision }) }) });
     const data = await response.json();
     if (!response.ok) throw new ContinuationRequestError(data.error || `Request failed (${response.status})`, response.status === 409 && data.code === 'CONTINUATION_REJECTED' && data.outcome === 'not_created');
-    if (typeof data.id !== 'string' || !data.id || data.id === source.id || data.userId !== source.userId || data.repository !== source.repository || data.repositoryId !== source.repositoryId || data.installationId !== source.installationId || data.baseBranch !== source.baseBranch || typeof data.branch !== 'string' || !data.branch || data.branch === source.branch || data.continuation?.sourceSessionId !== source.id || data.continuation?.sourceBranch !== source.branch || typeof data.continuation?.commitSha !== 'string' || data.continuation.commitSha.toLowerCase() !== intent.expectedHeadSha.toLowerCase() || !Number.isFinite(Date.parse(data.continuation?.verifiedAt))) throw new ContinuationRequestError('The response could not confirm the new machine. Check the machine list or retry the same request.', false);
+    if ((intent.environment && !sameEnvironment(intent.environment, data.environment)) || typeof data.id !== 'string' || !data.id || data.id === source.id || data.userId !== source.userId || data.repository !== source.repository || data.repositoryId !== source.repositoryId || data.installationId !== source.installationId || data.baseBranch !== source.baseBranch || typeof data.branch !== 'string' || !data.branch || data.branch === source.branch || data.continuation?.sourceSessionId !== source.id || data.continuation?.sourceBranch !== source.branch || typeof data.continuation?.commitSha !== 'string' || data.continuation.commitSha.toLowerCase() !== intent.expectedHeadSha.toLowerCase() || !Number.isFinite(Date.parse(data.continuation?.verifiedAt))) throw new ContinuationRequestError('The response could not confirm the new machine. Check the machine list or retry the same request.', false);
     return data as Session;
   };
   try { return await Promise.race([request(), timeout]); }

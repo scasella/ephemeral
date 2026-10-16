@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { parseEnv } from 'node:util';
 import { initializeLocalConfig, localChildEnvironment, readLocalConfig, setLocalConfigValue, validateLocalConfig } from '../scripts/local-setup-config.js';
+import { runLocalSetup } from '../scripts/local-setup.js';
+import { readConfig } from '../server/config.js';
 
 const workspaces: string[] = [];
 afterEach(async () => { await Promise.all(workspaces.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -132,6 +134,43 @@ describe('private local configuration', () => {
     await rewrite(path, original.replace(/^PUBLIC_URL=''/m, "PUBLIC_URL='https://user:DO_NOT_ECHO@fixture.example'"));
     try { await readLocalConfig(path); throw new Error('Expected public read rejection'); } catch (error) { expect(String(error)).not.toContain('DO_NOT_ECHO'); expect(String(error)).toContain('HTTPS'); }
   });
+  it.each(['legacy-template', 'legacy-template:latest', 'legacy-template:default', 'template123:release-2026.10', 'team/ephemeral-base:release-2026.10', 'team/ephemeral-base:default'])('accepts Base template reference %s through private setup, runtime config and safe CLI display', async templateRef => {
+    const path = await workspace(); await initializeLocalConfig(path);
+    for (const [key, value] of Object.entries({ PUBLIC_URL: 'https://fixture.example', E2B_API_KEY: 'fixture-key', GITHUB_APP_ID: '123', GITHUB_APP_SLUG: 'fixture', GITHUB_CLIENT_ID: 'fixture', GITHUB_CLIENT_SECRET: 'fixture-secret', GITHUB_APP_PRIVATE_KEY: 'fixture-pem', ALLOWED_GITHUB_IDS: '123' })) await setLocalConfigValue(path, key, value);
+    const before = await readFile(join(path, '.env.live'), 'utf8');
+    const encryptionKey = (await readLocalConfig(path)).ENCRYPTION_KEY;
+    await setLocalConfigValue(path, 'E2B_TEMPLATE_ID', templateRef, { expectedContent: before });
+    const saved = await readFile(join(path, '.env.live'), 'utf8');
+    const values = await readLocalConfig(path);
+    expect(values.E2B_TEMPLATE_ID).toBe(templateRef); expect(values.ENCRYPTION_KEY).toBe(encryptionKey);
+    const child = localChildEnvironment(values, { E2B_TEMPLATE_ID: 'inherited-template' });
+    expect(child.E2B_TEMPLATE_ID).toBe(templateRef);
+    const config = readConfig(child);
+    expect(config.e2bTemplateId).toBe(templateRef);
+    expect(config.environmentProfiles.profiles[0]).toMatchObject({ id: 'default', templateRef });
+    const output: string[] = [];
+    expect(await runLocalSetup(['get', 'E2B_TEMPLATE_ID'], { workspace: path, read: readLocalConfig, output: value => { output.push(value); } })).toBe(0);
+    expect(output).toEqual([templateRef]);
+    await setLocalConfigValue(path, 'E2B_TEMPLATE_ID', templateRef);
+    await expect(setLocalConfigValue(path, 'E2B_TEMPLATE_ID', 'replacement:release-1')).rejects.toThrow('differs');
+    expect(await readFile(join(path, '.env.live'), 'utf8')).toBe(saved);
+    expect((await lstat(join(path, '.env.live'))).mode & 0o777).toBe(0o600);
+    expect(await readdir(join(path, '.data/local-live'))).toEqual([]);
+  });
+  it('rejects unsafe template references before any private-file mutation and preserves blank setup values', async () => {
+    const path = await workspace(); await initializeLocalConfig(path);
+    const before = await readFile(join(path, '.env.live'), 'utf8'); const original = await lstat(join(path, '.env.live'));
+    for (const value of ['e2b_DO_NOT_ECHO', 'team/e2b_DO_NOT_ECHO:release-1', 'template:sk-DO_NOT_ECHO', 'ghp_DO_NOT_ECHO', 'https://private.example/template:v1', '../template:v1', 'team/../template:v1', 'team/nested/template:v1', 'template:release..1', 'template:$(touch)', 'template;touch', 'template:v1\n', 'template:v1\r', 'template:v1\u200b', 'template.with.dots', 'template:' + 'v'.repeat(65)]) {
+      const error = await setLocalConfigValue(path, 'E2B_TEMPLATE_ID', value).then(() => undefined, (error: unknown) => error);
+      expect(error).toBeInstanceOf(Error); expect(String(error)).toContain('E2B_TEMPLATE_ID'); expect(String(error)).not.toContain('DO_NOT_ECHO');
+      expect(await readFile(join(path, '.env.live'), 'utf8')).toBe(before);
+      expect((await lstat(join(path, '.env.live'))).ino).toBe(original.ino);
+      expect(await readdir(join(path, '.data/local-live'))).toEqual([]);
+    }
+    await setLocalConfigValue(path, 'E2B_TEMPLATE_ID', '');
+    expect(await readFile(join(path, '.env.live'), 'utf8')).toBe(before);
+    expect(localChildEnvironment(await readLocalConfig(path), { E2B_TEMPLATE_ID: 'inherited-template' }).E2B_TEMPLATE_ID).toBe('');
+  });
   it('rejects linked files and active setup locks', async () => {
     const path = await workspace(); await initializeLocalConfig(path);
     await link(join(path, '.env.live'), join(path, 'linked-env'));
@@ -163,4 +202,32 @@ describe('private local configuration', () => {
     const supplemented = { ...parseEnv('DATABASE_URL=cloud\nPREVIEW_PUBLIC_URL=https://cloud.example\nGITHUB_APP_PRIVATE_KEY=cloud\nE2B_API_URL=https://cloud.example'), ...env };
     expect(supplemented.DATABASE_URL).toBe(''); expect(supplemented.GITHUB_APP_PRIVATE_KEY).toBe(''); expect(supplemented.E2B_API_URL).toBe('');
   });
+  it('forwards only the selected optional catalog path and keeps old or blank configurations independent of inherited state', async () => {
+    const path = await workspace(); await initializeLocalConfig(path);
+    const selectedPath = join(path, '.data', 'environment profiles.json');
+    await setLocalConfigValue(path, 'ENVIRONMENT_PROFILES_FILE', selectedPath);
+    const before = await readFile(join(path, '.env.live'), 'utf8');
+    const selected = await readLocalConfig(path);
+    const child = localChildEnvironment(selected, { ENVIRONMENT_PROFILES_FILE: '/inherited/private/catalog.json' });
+    expect(child.ENVIRONMENT_PROFILES_FILE).toBe(selectedPath);
+    await initializeLocalConfig(path); expect(await readFile(join(path, '.env.live'), 'utf8')).toBe(before);
+    await setLocalConfigValue(path, 'ENVIRONMENT_PROFILES_FILE', selectedPath);
+    expect((await lstat(join(path, '.env.live'))).mode & 0o777).toBe(0o600);
+    const inherited = { ENVIRONMENT_PROFILES_FILE: '/inherited/private/catalog.json' };
+    expect(localChildEnvironment({}, inherited).ENVIRONMENT_PROFILES_FILE).toBe('');
+    expect(localChildEnvironment({ ENVIRONMENT_PROFILES_FILE: '' }, inherited).ENVIRONMENT_PROFILES_FILE).toBe('');
+    await rewrite(path, before.replace(/^ENVIRONMENT_PROFILES_FILE=.*\n/m, ''));
+    await initializeLocalConfig(path);
+    expect(localChildEnvironment(await readLocalConfig(path), inherited).ENVIRONMENT_PROFILES_FILE).toBe('');
+  });
+  it('rejects unsafe catalog paths without changing private configuration or exposing the supplied path', async () => {
+    const path = await workspace(); await initializeLocalConfig(path);
+    const before = await readFile(join(path, '.env.live'), 'utf8');
+    for (const value of ['../private-catalog', '/private/../private-catalog', '/private/catalog\nkey', '/private/catalog\u200b']) {
+      await expect(setLocalConfigValue(path, 'ENVIRONMENT_PROFILES_FILE', value)).rejects.toThrow('ENVIRONMENT_PROFILES_FILE');
+      expect(() => localChildEnvironment({ ENVIRONMENT_PROFILES_FILE: value })).toThrow('ENVIRONMENT_PROFILES_FILE');
+      expect(await readFile(join(path, '.env.live'), 'utf8')).toBe(before);
+    }
+  });
+
 });

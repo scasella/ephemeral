@@ -1,3 +1,6 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { ContinuationForm } from './Continuation';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from './api';
 import { continuationBlockedReason, ContinuationPreviewLoader, ContinuationRequestError, previewBlockedReason, readContinuationIntent, submitContinuation, type ContinuationIntent, type ContinuationPreview } from './continuation-state';
@@ -92,5 +95,50 @@ describe('saved note continuation intent', () => {
     await submitContinuation(source, { ...intent, expectedNoteRevision: 3, reviewedNote: note });
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ expectedHeadSha: sha, requestId: intent.requestId, expectedNoteRevision: 3 });
     expect(fetch.mock.calls[0][1].body).not.toContain('Exact saved text');
+  });
+});
+
+describe('continuation environment binding', () => {
+  const environment = { id: 'python', revision: 'b'.repeat(64) };
+  const child = { ...source, id: 'child', branch: 'ephemeral/child', environment, continuation: { sourceSessionId: source.id, sourceBranch: source.branch, commitSha: sha, verifiedAt: preview.checkedAt } };
+  it('restores exact selected references and keeps legacy request absence intact', () => {
+    const selected = { ...intent, environment };
+    expect(readContinuationIntent(JSON.stringify(selected), source.id)).toEqual(selected);
+    expect(readContinuationIntent(JSON.stringify(intent), source.id)).not.toHaveProperty('environment');
+    for (const invalid of [null, {}, { ...environment, revision: 'bad' }, { ...environment, tools: [] }]) expect(readContinuationIntent(JSON.stringify({ ...intent, environment: invalid }), source.id)).toBeNull();
+  });
+  it('retries with the exact original profile despite a changed source or current catalog', async () => {
+    const selected = { ...intent, environment };
+    const fetch = vi.fn().mockRejectedValueOnce(new TypeError('Lost response')).mockResolvedValueOnce({ ok: true, json: async () => child }); vi.stubGlobal('fetch', fetch);
+    await expect(submitContinuation(source, selected)).rejects.toMatchObject({ definite: false });
+    await expect(submitContinuation(source, readContinuationIntent(JSON.stringify(selected), source.id)!)).resolves.toMatchObject({ environment });
+    expect(fetch.mock.calls.map(call => JSON.parse(call[1].body).environment)).toEqual([environment, environment]);
+  });
+  it('preserves saved recovery when successful response profile is missing or different', async () => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    for (const response of [undefined, { ...environment, id: 'default' }, { ...environment, revision: 'c'.repeat(64) }]) {
+      fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ...child, environment: response }) });
+      await expect(submitContinuation(source, { ...intent, environment })).rejects.toMatchObject({ definite: false });
+    }
+  });
+});
+
+
+describe('continuation saved selection recovery presentation', () => {
+  const props = { accountKey: 'live:owner', source, sessions: [{ ...source, id: 'active', state: 'running' as const }], now, previewMode: false, canLaunch: false, refreshSessions: vi.fn(), onBusyChange: vi.fn(), onCreated: vi.fn(), onClose: vi.fn(), onSelectSession: vi.fn() };
+  it('allows retry of the original environment reference despite an active machine and unavailable new-launch configuration', () => {
+    vi.stubGlobal('sessionStorage', { getItem: () => JSON.stringify({ ...intent, environment: { id: 'python', revision: 'b'.repeat(64) } }) });
+    const html = renderToStaticMarkup(createElement(ContinuationForm, props));
+    expect(html).toContain('Retry retains this exact selection'); expect(html).not.toContain('<select'); expect(html).toContain('class="button primary">Check or retry saved request');
+  });
+  it('preserves recovery of legacy requests without inventing a historical profile', () => {
+    vi.stubGlobal('sessionStorage', { getItem: () => JSON.stringify(intent) });
+    const html = renderToStaticMarkup(createElement(ContinuationForm, props));
+    expect(html).toContain('original server-side environment behavior'); expect(html).toContain('class="button primary">Check or retry saved request');
+  });
+  it('blocks corrupted stored environment references instead of replacing an accepted pending request', () => {
+    vi.stubGlobal('sessionStorage', { getItem: () => JSON.stringify({ ...intent, environment: { id: 'python', revision: 'bad' } }) });
+    const html = renderToStaticMarkup(createElement(ContinuationForm, props));
+    expect(html).toContain('could not be safely restored'); expect(html).toContain('Check machine list'); expect(html).toContain('class="button primary" disabled=""'); expect(html).not.toContain('<select');
   });
 });

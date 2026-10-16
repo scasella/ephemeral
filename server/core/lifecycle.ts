@@ -1,3 +1,5 @@
+import { copyResolvedEnvironmentProfile } from '../environments.js';
+import { copyGitHubLaunchSource, parseGitHubLaunchUrl } from '../../shared/github-launch.js';
 import { randomUUID } from 'node:crypto';
 import { SessionOperationError } from './errors.js';
 import type { CreateSessionInput, GatewayCredentials, SandboxProvider, Session, SessionRepository } from '../contracts.js';
@@ -34,13 +36,22 @@ export class SessionManager {
     let continuation: Session['continuation'];
     try { continuation = input.continuation ? copyContinuation(input.continuation) : undefined; }
     catch { throw new SessionNotCreatedError('Invalid continuation reference.'); }
+    let launchSource: Session['launchSource'];
+    try {
+      launchSource = input.launchSource ? copyGitHubLaunchSource(input.launchSource) : undefined;
+      if (launchSource && (continuation || launchSource.baseBranch !== input.baseBranch ||
+        parseGitHubLaunchUrl(launchSource.url).repository.toLowerCase() !== input.repository.toLowerCase())) throw new Error();
+    } catch { throw new SessionNotCreatedError('Invalid GitHub launch source.'); }
+    let environment: Session['environment'];
+    try { environment = input.environment === undefined ? undefined : copyResolvedEnvironmentProfile(input.environment); }
+    catch { throw new SessionNotCreatedError('Invalid environment profile.'); }
     const now = this.now();
     const id = options.id ?? randomUUID();
     if (!SESSION_UUID.test(id) || id === continuation?.sourceSessionId) throw new SessionNotCreatedError('A fresh session ID is required.');
     if (await this.repo.get(id)) throw new SessionNotCreatedError('Session ID already exists.');
     if (this.closed) throw new SessionNotCreatedError('Session service is shutting down.');
     const session: Session = {
-      ...input, ...(continuation ? { continuation } : {}), id, branch: `ephemeral/${id}`, state: 'provisioning',
+      ...input, ...(continuation ? { continuation } : {}), ...(launchSource ? { launchSource } : {}), ...(environment ? { environment } : {}), id, branch: `ephemeral/${id}`, state: 'provisioning',
       createdAt: new Date(now).toISOString(), expiresAt: new Date(now + HOUR).toISOString(),
       maxExpiresAt: new Date(now + (this.options.maxHours ?? 4) * HOUR).toISOString(), sandboxId: null, endedAt: null, error: null,
       cleanup: { vm: 'pending', github: 'pending', gateway: 'pending', codex: 'pending' }, codexRemoteRevocation: 'unverified',
@@ -189,7 +200,7 @@ export class SessionManager {
       if (session.state !== 'running' || !session.sandboxId || this.now() >= Date.parse(session.expiresAt)) throw new SessionOperationError('Only an active, unexpired session can be extended.');
       if (beforeExtend) {
         const identity = (value: Session) => JSON.stringify([value.id, value.userId, value.repository, value.repositoryId, value.installationId,
-          value.branch, value.baseBranch, value.createdAt, value.sandboxId, value.expiresAt, value.maxExpiresAt, value.continuation]);
+          value.branch, value.baseBranch, value.createdAt, value.sandboxId, value.expiresAt, value.maxExpiresAt, value.continuation, value.launchSource]);
         const reviewed = identity(session);
         await beforeExtend(structuredClone(session));
         session = await this.require(id);

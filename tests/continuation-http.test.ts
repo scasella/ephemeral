@@ -101,4 +101,20 @@ describe('continuation HTTP ownership, intent and preview honesty', () => {
     expect((await fetch(`${previewOrigin}/api/sessions/${p.id}/continue`, { method: 'POST', headers, body: JSON.stringify({ expectedHeadSha: sha, requestId: randomUUID() }) })).status).toBe(409);
     expect(stubs.preview).not.toHaveBeenCalled();
   });
+  it('resolves an explicit continuation environment and rejects injected or stale selections before durable reservation', async () => {
+    const s = await insert(), intent = { expectedHeadSha: sha, requestId: randomUUID() };
+    const catalog = await fetch(`${origin}/api/environments`, { headers }).then(response => response.json()), profile = catalog.profiles[2];
+    const requestCount = (await application.db.query('SELECT * FROM ephemeral_continuation_requests')).rows.length;
+    for (const [environment, status] of [[profile, 400], [{ id: profile.id, revision: profile.revision, templateRef: 'evil:v1' }, 400],
+      [null, 400], [{ id: 'removed', revision: profile.revision }, 409], [{ id: profile.id, revision: 'f'.repeat(64) }, 409]] as const) {
+      const response = await post(s.id, { ...intent, environment }); expect(response.status).toBe(status);
+      if (status === 409) expect(await response.json()).toMatchObject({ code: 'CONTINUATION_REJECTED', outcome: 'not_created' });
+    }
+    expect((await application.db.query('SELECT * FROM ephemeral_continuation_requests')).rows.length).toBe(requestCount);
+    const environment = { id: profile.id, revision: profile.revision }, response = await post(s.id, { ...intent, environment });
+    expect(response.status).toBe(202); const child = await response.json(); expect(child.environment).toEqual(profile);
+    expect((await post(s.id, { ...intent, environment }).then(response => response.json())).id).toBe(child.id);
+    const changed = await post(s.id, intent); expect(changed.status).toBe(409); expect(await changed.json()).not.toHaveProperty('outcome');
+  });
+
 });

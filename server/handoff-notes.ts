@@ -1,3 +1,5 @@
+import type { EnvironmentProfile } from '../shared/environments.js';
+import { sameEnvironment } from './launch-environment.js';
 import { z } from 'zod';
 import type { Database, HandoffNote, HandoffNotesResponse, InheritedHandoffNote, SaveHandoffNotesInput, SessionRepository } from './contracts.js';
 
@@ -19,7 +21,7 @@ export interface CaptureHandoffInput {
 }
 export interface ReserveHandoffInput {
   userId: string; sourceSessionId: string; requestId: string; targetSessionId: string; expectedHeadSha: string;
-  repository: string; repositoryId: number; installationId: number; sourceBranch: string; baseBranch: string; expectedNoteRevision?: number;
+  repository: string; repositoryId: number; installationId: number; sourceBranch: string; baseBranch: string; expectedNoteRevision?: number; environment?: EnvironmentProfile;
 }
 const emptyNote = (): HandoffNote => ({ revision: 0, updatedAt: null, nextStep: '', unresolvedIssues: '', verification: '' });
 function note(row?: NoteRow): HandoffNote { return row ? { revision: Number(row.revision), updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
@@ -108,13 +110,13 @@ export async function createHandoffNotesService(db: Database, repo: SessionRepos
       throw new HandoffNotesError(409, 'The saved notes no longer match this continuation.');
     }
     const existing = await db.query<{ target_id: string; expected_sha: string; repository: string; repository_id: number; status: string;
-      installation_id: number; source_branch: string; base_branch: string }>(
+      installation_id: number; source_branch: string; base_branch: string; environment: EnvironmentProfile | null }>(
       'SELECT * FROM ephemeral_continuation_requests WHERE user_id=$1 AND source_id=$2 AND request_id=$3',
       [input.userId, input.sourceSessionId, input.requestId.toLowerCase()]);
     const previous = existing.rows[0];
     if (previous && (previous.expected_sha !== input.expectedHeadSha.toLowerCase() || previous.repository !== input.repository ||
       Number(previous.repository_id) !== input.repositoryId || Number(previous.installation_id) !== input.installationId ||
-      previous.source_branch !== input.sourceBranch || previous.base_branch !== input.baseBranch)) {
+      previous.source_branch !== input.sourceBranch || previous.base_branch !== input.baseBranch || !sameEnvironment(previous.environment, input.environment))) {
       throw new HandoffNotesError(409, 'The saved continuation no longer matches its source.');
     }
     const target = await repo.get(previous?.target_id ?? input.targetSessionId);
@@ -136,11 +138,11 @@ export async function createHandoffNotesService(db: Database, repo: SessionRepos
       ))
     ), reserved AS (
       INSERT INTO ephemeral_continuation_requests AS previous
-        (user_id,source_id,request_id,target_id,expected_sha,repository,repository_id,installation_id,source_branch,base_branch)
-      SELECT user_id,id,$3,$4,$5,$6,$7,$8,$9,$10 FROM reviewed
+        (user_id,source_id,request_id,target_id,expected_sha,repository,repository_id,installation_id,source_branch,base_branch,environment)
+      SELECT user_id,id,$3,$4,$5,$6,$7,$8,$9,$10,$12::jsonb FROM reviewed
       ON CONFLICT(user_id,source_id,request_id) DO UPDATE SET request_id=previous.request_id
       WHERE previous.expected_sha=$5 AND previous.repository=$6 AND previous.repository_id=$7 AND previous.installation_id=$8
-        AND previous.source_branch=$9 AND previous.base_branch=$10 RETURNING target_id
+        AND previous.source_branch=$9 AND previous.base_branch=$10 AND previous.environment IS NOT DISTINCT FROM $12::jsonb RETURNING target_id
     ), captured AS (
       INSERT INTO ephemeral_inherited_handoff_notes
         (target_session_id,user_id,source_session_id,source_branch,source_commit_sha,source_note_revision,source_note_updated_at,next_step,unresolved_issues,verification)
@@ -149,7 +151,7 @@ export async function createHandoffNotesService(db: Database, repo: SessionRepos
       ON CONFLICT(target_session_id) DO NOTHING RETURNING target_session_id
     ) SELECT target_id FROM reserved`,
     [input.userId, input.sourceSessionId, input.requestId.toLowerCase(), input.targetSessionId, input.expectedHeadSha.toLowerCase(),
-      input.repository, input.repositoryId, input.installationId, input.sourceBranch, input.baseBranch, previous ? null : input.expectedNoteRevision ?? null]);
+      input.repository, input.repositoryId, input.installationId, input.sourceBranch, input.baseBranch, previous ? null : input.expectedNoteRevision ?? null, input.environment ? JSON.stringify(input.environment) : null]);
     if (!rows[0]) {
       const prior = await db.query<{ expected_sha: string }>('SELECT expected_sha FROM ephemeral_continuation_requests WHERE user_id=$1 AND source_id=$2 AND request_id=$3',
         [input.userId, input.sourceSessionId, input.requestId.toLowerCase()]);

@@ -1,0 +1,17 @@
+.launch-methods{display:flex;gap:8px;padding-bottom:18px;border-bottom:1px solid var(--border)}
+.launch-methods .button{flex:1;font-size:13px;padding:0 10px}
+.github-review-button{margin-top:14px}
+.github-launch-review,.github-launch-recovery{background:var(--surface-muted);border:1px solid var(--border);border-radius:4px;padding:16px;margin-top:20px}
+.github-launch-review h3{font-size:14px;line-height:1.6;margin:0 0 14px}
+.github-launch-review h3:focus{outline:2px solid var(--focus);outline-offset:5px;border-radius:2px}
+.github-launch-review dl{margin:0;display:grid;gap:12px}
+.github-launch-review dl>div{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;font-size:13px;line-height:1.6}
+.github-launch-review dt{color:var(--text-muted)}
+.github-launch-review dd{margin:0;overflow-wrap:anywhere;min-width:0}
+.github-launch-review p,.github-launch-recovery p,.github-launch-source p{font-size:12px;color:var(--text-muted);line-height:1.9;margin-top:14px}
+.github-launch-recovery strong{font-size:13px;font-weight:500}
+.github-launch-source{border-top:1px solid var(--border);margin-top:22px;padding-top:20px}
+.github-launch-source h4{font-size:14px;font-weight:500}
+.github-launch-source .settings-list code,.github-launch-source .settings-list a{overflow-wrap:anywhere}
+.github-launch-form[hidden]{display:none}
+@media(max-width:430px){.launch-methods{flex-direction:column}.launch-methods .button{flex:auto;width:100%}.github-launch-review{padding:13px}.github-launch-review dl>div{grid-template-columns:88px minmax(0,1fr);font-size:12px;gap:8px}.github-launch-form .modal-actions{flex-wrap:wrap}.github-launch-form .modal-actions .button{font-size:12px}}

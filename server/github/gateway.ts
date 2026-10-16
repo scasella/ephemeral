@@ -1,3 +1,4 @@
+import { copyGitHubLaunchSource } from '../../shared/github-launch.js';
 import express, { type Request, type Response } from 'express';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -262,6 +263,7 @@ export class GitGateway {
       await this.withAuth(session, token, async env => {
         const dir = await this.prepare(session, env);
         let baseOid = await this.store.anchors.get(session);
+        if (baseOid && session.launchSource && baseOid !== copyGitHubLaunchSource(session.launchSource).commitSha) throw new GitHubError('Saved clone anchor does not match the reviewed GitHub commit.', 409);
         const eligible = await this.store.anchors.eligible(session);
         const baseRef = `refs/heads/${session.baseBranch}`;
         const resolve = async (ref: string): Promise<string | null> => {
@@ -274,7 +276,17 @@ export class GitGateway {
         // Never pick a first-push ancestor from receive-pack's moving upstream base.
         // Persist before the first upload advertisement, including protocol v2 discovery.
         if (!baseOid && !write && eligible) {
-          const source = session.continuation ? copyContinuation(session.continuation).commitSha : baseRef;
+          const launch = session.launchSource ? copyGitHubLaunchSource(session.launchSource) : undefined;
+          const source = launch?.commitSha ?? (session.continuation ? copyContinuation(session.continuation).commitSha : baseRef);
+          if (launch && !await resolve(source)) {
+            if (launch.kind === 'pull_request') {
+              await this.command(id, ['-c', 'credential.helper=', '-c', `core.askPass=${env.GIT_ASKPASS}`, '-c', 'http.followRedirects=false',
+                '--git-dir', dir, 'fetch', '--no-tags', '--no-auto-maintenance', env.EP_UPSTREAM!,
+                `+refs/pull/${launch.pullRequestNumber}/head:refs/ephemeral/reviewed-pull`], env);
+            }
+            if (!await resolve(source)) await this.command(id, ['-c', 'credential.helper=', '-c', `core.askPass=${env.GIT_ASKPASS}`, '-c', 'http.followRedirects=false',
+              '--git-dir', dir, 'fetch', '--no-tags', '--no-auto-maintenance', env.EP_UPSTREAM!, source], env);
+          }
           const candidate = await resolve(source);
           if (!candidate) throw new GitHubError('The session clone base is unavailable; restore the selected base or start a fresh session', 409);
           baseOid = await this.store.anchors.capture(session, candidate);

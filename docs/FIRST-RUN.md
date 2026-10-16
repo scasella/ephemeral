@@ -117,6 +117,8 @@ E2B compute/template usage and any tunnel-plan limits belong to your own account
 
 The build uses the `ephemeral-codex` template alias. If that alias already serves another installation, reuse a compatible existing template rather than approving an unexpected update to its default build.
 
+The configured template becomes the **Base** environment profile. After first-run setup, you can add named toolchains using a private `ENVIRONMENT_PROFILES_FILE`; the guided local launcher forwards this optional setting from `.env.live`. See [environment profiles](ENVIRONMENTS.md) for offline Base/Node.js/Python recipes, release-tagged references and the limits of catalog revisions. Additional templates require separate, explicitly run provider builds.
+
 The optional application Preview viewer is disabled in the initial configuration. Enabling it requires its own separate viewer-origin setup; it is not enabled by exposing the control plane. See [Preview configuration](RELEASE.md#private-preview-migration).
 
 Use [GitHub private vulnerability reporting](https://github.com/scasella/ephemeral/security/advisories/new) for suspected security issues. There is no separate support email, response-time guarantee or hosted content-retention commitment. See [security guidance](../SECURITY.md), [hosted support draft](SUPPORT.md) and [retention draft](RETENTION.md). Treat this as an experimental local project, not an operated public service.

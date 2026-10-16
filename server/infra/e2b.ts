@@ -1,5 +1,9 @@
+import { copyResolvedEnvironmentProfile } from '../environments.js';
 import { ApiClient, CommandExitError, ConnectionConfig, NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import type { WorkspaceDirectory, WorkspaceFile, WriteWorkspaceFileInput } from '../../shared/workspace-files.js';
+import { FileOperationError, parseWorkspaceDirectory, parseWorkspaceFile, validateWorkspacePath, validateWorkspaceWrite } from '../workspace-files.js';
+import { workspaceFilesCommand, WORKSPACE_FILES_FRAME, type WorkspaceFileRequest } from './workspace-files.js';
 import type { PreviewTarget, SandboxProvider, Session, SetupCommand, SetupCommandResult, TerminalConnection, TerminalShellState } from '../contracts.js';
 import { inspectGitWorkspace, unavailableWorkStatus, type GitInspectionResult, type WorkStatus } from '../workspace-status.js';
 import { SETUP_CLEANUP_MS, SetupOutputDecoder, setupRunnerSource } from './setup-runner.js';
@@ -10,6 +14,8 @@ import { recoverPrimaryShellCommand, shellCommand, shellTarget, SHELL_FRAME } fr
 import { changeInspectionCommand, CHANGES_FRAME } from './change-inspection.js';
 import { isChangePath, parseWorkspaceChanges, unavailableWorkspaceChanges, type WorkspaceChanges } from '../workspace-changes.js';
 import { APPLICATION_PREVIEW_UNAVAILABLE, assertApplicationPreviewSession, privateApplicationPreviewTarget, type PreviewTokenStore } from './application-preview.js';
+import type { SessionResourceSnapshot } from '../../shared/resource-visibility.js';
+import { assertResourceSession, latestProviderResourceMetrics, resourceSnapshotFromDetail, unavailableResourceSnapshot } from '../resource-visibility.js';
 import { PREVIEW_GATEWAY_PORT, PREVIEW_GATEWAY_SOURCE, PREVIEW_GATEWAY_VERSION, previewGatewayInstallCommand,
   previewGatewaySource, previewGatewayStartCommand } from './preview-gateway.js';
 
@@ -32,6 +38,59 @@ export class E2BProvider implements SandboxProvider {
   }
   private opts() { return { apiKey: this.config.apiKey, requestTimeoutMs: REQUEST_MS }; }
   private connect(id: string) { return Sandbox.connect(id, this.opts()); }
+
+  async inspectResources(session: Session, signal?: AbortSignal): Promise<SessionResourceSnapshot> {
+    try { assertResourceSession(session); }
+    catch { return unavailableResourceSnapshot(); }
+    try {
+      const sandboxId = session.sandboxId!;
+      const identity = JSON.stringify([session.id, session.userId, session.repository, session.repositoryId, session.branch, sandboxId]);
+      // Every read shares one deadline. There are no retries, connections, VM
+      // lifecycle changes, guest commands, or provider credentials in the result.
+      const deadline = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10_000)]);
+      const opts = { ...this.opts(), requestTimeoutMs: 10_000, retries: 0 };
+      const api = new ApiClient(new ConnectionConfig(opts)).api;
+      const read = async <T>(operation: () => Promise<T>): Promise<T> => {
+        deadline.throwIfAborted();
+        // Bound even a transport that fails to honor its supplied AbortSignal.
+        return new Promise<T>((resolve, reject) => {
+          const aborted = () => reject(new Error('Resource read cancelled.'));
+          deadline.addEventListener('abort', aborted, { once: true });
+          Promise.resolve().then(operation).then(resolve, reject).finally(() => deadline.removeEventListener('abort', aborted));
+          if (deadline.aborted) aborted();
+        });
+      };
+      const detail = async () => {
+        assertResourceSession(session);
+        const response = await read(() => api.GET('/sandboxes/{sandboxID}', {
+          params: { path: { sandboxID: sandboxId } }, signal: deadline,
+        }));
+        deadline.throwIfAborted();
+        if (response.error || !response.data) throw new Error();
+        return resourceSnapshotFromDetail(session, response.data);
+      };
+      const first = await detail();
+      const end = Math.floor(Date.now() / 1000);
+      let samples: unknown = null;
+      try {
+        assertResourceSession(session);
+        const response = await read(() => api.GET('/sandboxes/{sandboxID}/metrics', {
+          params: { path: { sandboxID: sandboxId }, query: { start: end - 60, end } }, signal: deadline,
+        }));
+        if (!response.error) samples = response.data;
+      } catch { deadline.throwIfAborted(); }
+      // A stop, changed identity, deadline, or lifecycle revocation during the
+      // metrics read invalidates all observed data, including the allocation.
+      const confirmed = await detail();
+      if (confirmed.startedAt !== first.startedAt || JSON.stringify(confirmed.allocation) !== JSON.stringify(first.allocation)) throw new Error();
+      confirmed.metrics = latestProviderResourceMetrics(samples, confirmed.allocation!.cpuCount,
+        Date.parse(confirmed.checkedAt), Date.parse(confirmed.startedAt!));
+      deadline.throwIfAborted();
+      assertResourceSession(session);
+      if (JSON.stringify([session.id, session.userId, session.repository, session.repositoryId, session.branch, session.sandboxId]) !== identity) throw new Error();
+      return confirmed;
+    } catch { return unavailableResourceSnapshot(undefined, 'unknown'); }
+  }
 
   async previewTarget(session: Session, port: number, signal?: AbortSignal): Promise<PreviewTarget> {
     try {
@@ -77,6 +136,89 @@ export class E2BProvider implements SandboxProvider {
       metadata.ephemeral_branch !== session.branch)) throw new Error('Workspace identity could not be verified.');
     return new Sandbox({ ...opts, sandboxId: info.sandboxID, sandboxDomain: info.domain ?? undefined,
       envdVersion: info.envdVersion, envdAccessToken: info.envdAccessToken });
+  }
+
+  private async workspaceFileOperation(session: Session, request: WorkspaceFileRequest): Promise<unknown> {
+    try {
+      if (!session.sandboxId || !/^[a-zA-Z0-9_-]{1,128}$/.test(session.sandboxId) || session.endedAt) throw new Error();
+      const sandbox = await this.runningTerminalSandbox(session.sandboxId, session);
+      // The detail lookup can outlive the persisted deadline. Never start work after it.
+      if (Math.min(Date.parse(session.expiresAt), Date.parse(session.maxExpiresAt)) <= Date.now()) throw new Error();
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]);
+      const stdoutLimit = 1_000_000, stderrLimit = 64 * 1024;
+      const unavailable = new Error('Workspace file operation unavailable.');
+      let stdoutBytes = 0, stderrBytes = 0;
+      const output = (stream: 'stdout' | 'stderr', chunk: string) => {
+        if (signal.aborted) throw unavailable;
+        if (stream === 'stdout') stdoutBytes += Buffer.byteLength(chunk, 'utf8');
+        else stderrBytes += Buffer.byteLength(chunk, 'utf8');
+        if (stdoutBytes > stdoutLimit || stderrBytes > stderrLimit) {
+          // The SDK appends each chunk before awaiting this callback. Throwing
+          // closes its iterator; abort also stops transport work before a handle
+          // is available. Retained output is bounded by these limits + one chunk.
+          controller.abort();
+          throw unavailable;
+        }
+      };
+      const bounded = async <T>(operation: () => Promise<T>): Promise<T> => {
+        signal.throwIfAborted();
+        let aborted!: () => void;
+        const cancellation = new Promise<never>((_resolve, reject) => {
+          aborted = () => reject(unavailable);
+          signal.addEventListener('abort', aborted, { once: true });
+          if (signal.aborted) aborted();
+        });
+        try {
+          return await Promise.race([cancellation, Promise.resolve().then(() => { signal.throwIfAborted(); return operation(); })]);
+        } finally { signal.removeEventListener('abort', aborted); }
+      };
+      let result;
+      try {
+        const handle = await bounded(() => sandbox.commands.run(workspaceFilesCommand(request), {
+          user: 'user', cwd: WORKSPACE, background: true, stdin: true, timeoutMs: 10_000, requestTimeoutMs: 12_000, signal,
+          onStdout: chunk => output('stdout', chunk), onStderr: chunk => output('stderr', chunk),
+        }));
+        // Keep text out of exec arguments: Linux limits each argument to 128 KiB.
+        // A newline frames bounded JSON stdin; the helper does not need EOF.
+        await bounded(() => handle.sendStdin(JSON.stringify(request) + '\n', { requestTimeoutMs: 5_000, signal }));
+        result = await bounded(() => handle.wait());
+      } finally { controller.abort(); }
+      // Retain validation for transports that return output without callbacks.
+      if (result.exitCode !== 0 || Buffer.byteLength(result.stdout, 'utf8') > stdoutLimit ||
+          Buffer.byteLength(result.stderr ?? '', 'utf8') > stderrLimit || !result.stdout.endsWith(WORKSPACE_FILES_FRAME)) throw new Error();
+      const body = JSON.parse(result.stdout.slice(0, -WORKSPACE_FILES_FRAME.length));
+      if (body.ok === false) {
+        const statuses: Record<string, number> = { invalid_path: 400, invalid_request: 400, not_found: 404, conflict: 409, too_large: 413, unsupported: 415, unavailable: 503 };
+        if (typeof body.code !== 'string' || statuses[body.code] !== body.status) throw new Error();
+        throw new FileOperationError(body.status, body.code);
+      }
+      if (body.ok !== true) throw new Error();
+      return body.value;
+    } catch (error) {
+      if (error instanceof FileOperationError) throw error;
+      // SDK errors can contain tokens, command text, or repository contents.
+      throw new FileOperationError(503, 'unavailable');
+    }
+  }
+  async listFiles(session: Session, path: string): Promise<WorkspaceDirectory> {
+    validateWorkspacePath(path, true);
+    const result = parseWorkspaceDirectory(await this.workspaceFileOperation(session, { operation: 'list', path }));
+    if (result.path !== path || result.simulation) throw new FileOperationError(503, 'unavailable');
+    return result;
+  }
+  async readFile(session: Session, path: string): Promise<WorkspaceFile> {
+    validateWorkspacePath(path);
+    const result = parseWorkspaceFile(await this.workspaceFileOperation(session, { operation: 'read', path }));
+    if (result.path !== path || result.simulation || createHash('sha256').update(result.content).digest('hex') !== result.version) throw new FileOperationError(503, 'unavailable');
+    return result;
+  }
+  async writeFile(session: Session, input: WriteWorkspaceFileInput): Promise<WorkspaceFile> {
+    const value = validateWorkspaceWrite(input);
+    const result = parseWorkspaceFile(await this.workspaceFileOperation(session, { operation: 'write', ...value }));
+    if (result.path !== value.path || result.content !== value.content || result.simulation ||
+        createHash('sha256').update(result.content).digest('hex') !== result.version) throw new FileOperationError(503, 'unavailable');
+    return result;
   }
 
   private async shellOperation(sandbox: Sandbox, shellId: string, action: 'ensure' | 'inspect' | 'close'): Promise<TerminalShellState> {
@@ -274,13 +416,19 @@ process.stdout.write(JSON.stringify({exitCode:result.status,stdout:result.stdout
   async create(session: Session, gatewayToken: string): Promise<string> {
     const remaining = Math.min(Date.parse(session.expiresAt), Date.parse(session.maxExpiresAt)) - Date.now();
     if (!Number.isFinite(remaining) || remaining < 1_000) throw new SandboxCreationError('not_created', 'request_not_sent');
+    // Only a validated server snapshot can override the deployment default. Invalid
+    // metadata is a definite local rejection before any provider create request.
+    let environment: Session['environment'];
+    try { environment = session.environment === undefined ? undefined : copyResolvedEnvironmentProfile(session.environment); }
+    catch { throw new SandboxCreationError('not_created', 'request_not_sent'); }
     let sandbox: Sandbox;
     try {
-      sandbox = await Sandbox.create(this.config.templateId, {
+      sandbox = await Sandbox.create(environment?.templateRef ?? this.config.templateId, {
         ...this.opts(), requestTimeoutMs: 60_000, retries: 0, timeoutMs: remaining,
         metadata: { ephemeral_session_id: session.id, ephemeral_user_id: session.userId,
           ephemeral_repository: session.repository, ephemeral_repository_id: String(session.repositoryId), ephemeral_branch: session.branch,
-          ephemeral_preview_gateway: PREVIEW_GATEWAY_VERSION },
+          ephemeral_preview_gateway: PREVIEW_GATEWAY_VERSION,
+          ...(environment ? { ephemeral_environment_id: environment.id, ephemeral_environment_revision: environment.revision } : {}) },
         envs: { EPHEMERAL_GATEWAY_TOKEN: gatewayToken },
         allowInternetAccess: true, secure: true,
         network: { allowPublicTraffic: false, maskRequestHost: 'localhost:${PORT}' },

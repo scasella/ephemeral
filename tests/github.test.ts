@@ -174,6 +174,47 @@ describe('GitHub credentials and API scope', () => {
 });
 
 describe('real Git smart HTTP gateway', () => {
+  it('clones an exact historical URL commit and permits pushes only to the assigned branch', async () => {
+    const f = await fixture(false), reviewed = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
+    await writeFile(join(f.work, 'file.txt'), 'newer main\n'); await ok(['-C', f.work, 'commit', '-am', 'advance main']);
+    await ok(['-C', f.work, 'push', f.upstream, 'main']);
+    const newer = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
+    const launched = { ...f.current, launchSource: { url: `https://github.com/owner/repository/commit/${reviewed}`, kind: 'commit' as const,
+      ref: reviewed, commitSha: reviewed, baseBranch: 'main', checkedAt: new Date().toISOString() } };
+    f.setCurrent(launched);
+    const clone = join(f.directory, 'pinned-clone'), auth = `Authorization: Basic ${Buffer.from(`x-access-token:${f.capability}`).toString('base64')}`;
+    await ok(['-c', `http.extraHeader=${auth}`, 'clone', '--single-branch', '--branch', 'main', f.remote, clone]);
+    expect(await ok(['-C', clone, 'rev-parse', 'HEAD'])).toBe(reviewed); expect(await f.store.anchors.get(launched)).toBe(reviewed);
+    await ok(['-C', clone, 'config', 'http.extraHeader', auth]); await ok(['-C', clone, 'config', 'user.name', 'Test']); await ok(['-C', clone, 'config', 'user.email', 'test@example.com']);
+    await ok(['-C', clone, 'checkout', '-b', launched.branch]);
+    await writeFile(join(clone, 'file.txt'), 'URL session work\n'); await ok(['-C', clone, 'commit', '-am', 'work from reviewed SHA']);
+    expect((await git(['-C', clone, 'push', 'origin', 'HEAD:refs/heads/main'])).code).not.toBe(0);
+    await ok(['-C', clone, 'push', 'origin', `HEAD:refs/heads/${launched.branch}`]);
+    expect(await ok(['--git-dir', f.upstream, 'rev-parse', 'main'])).toBe(newer);
+    expect(await ok(['--git-dir', f.upstream, 'rev-parse', launched.branch])).toBe(await ok(['-C', clone, 'rev-parse', 'HEAD']));
+  }, 60_000);
+
+  it('fetches an exact reviewed PR object outside heads and anchors ancestry to that SHA', async () => {
+    const f = await fixture(false), unrelatedMain = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
+    await ok(['-C', f.work, 'checkout', '--orphan', 'reviewed-pr']);
+    await writeFile(join(f.work, 'file.txt'), 'orphan PR work\n'); await ok(['-C', f.work, 'add', '.']); await ok(['-C', f.work, 'commit', '-m', 'reviewed PR']);
+    const reviewed = await ok(['-C', f.work, 'rev-parse', 'HEAD']);
+    await ok(['-C', f.work, 'push', f.upstream, 'HEAD:refs/pull/1/head']);
+    const launched = { ...f.current, launchSource: { url: 'https://github.com/owner/repository/pull/1', kind: 'pull_request' as const,
+      ref: 'reviewed-pr', commitSha: reviewed, baseBranch: 'main', checkedAt: new Date().toISOString(), pullRequestNumber: 1 } };
+    f.setCurrent(launched);
+    const clone = join(f.directory, 'pr-clone'), auth = `Authorization: Basic ${Buffer.from(`x-access-token:${f.capability}`).toString('base64')}`;
+    await ok(['-c', `http.extraHeader=${auth}`, 'clone', '--single-branch', '--branch', 'main', f.remote, clone]);
+    expect(await ok(['-C', clone, 'rev-parse', 'HEAD'])).toBe(reviewed); expect(await f.store.anchors.get(launched)).toBe(reviewed);
+    // Receiving a branch from unrelated main must not replace the reviewed clone's ancestry.
+    const rejected = await git(['-C', f.work, 'push', 'origin', `${unrelatedMain}:refs/heads/${launched.branch}`]); expect(rejected.code).not.toBe(0);
+    await ok(['-C', clone, 'config', 'http.extraHeader', auth]);
+    await ok(['-C', clone, 'push', 'origin', `HEAD:refs/heads/${launched.branch}`]);
+    expect(await ok(['--git-dir', f.upstream, 'rev-parse', launched.branch])).toBe(reviewed);
+    await f.restart(); expect(await f.store.anchors.get(launched)).toBe(reviewed);
+    await ok(['-C', clone, 'fetch', 'origin']); expect(await f.store.anchors.get(launched)).toBe(reviewed);
+  }, 60_000);
+
   it('anchors a new continuation branch to its reviewed source after main advances while retaining ref and ancestry restrictions', async () => {
     const f = await fixture(false);
     const sourceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';

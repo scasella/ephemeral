@@ -6,12 +6,13 @@ import { spawnSync } from 'node:child_process';
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseEnv } from 'node:util';
+import { isEnvironmentTemplateRef } from '../shared/environments.js';
 
 const defaults: Record<string, string> = {
   NODE_ENV: 'production', EPHEMERAL_MODE: 'live', HOST: '127.0.0.1', PORT: '4311',
   DATA_DIR: '.data/local-live', DATABASE_URL: '', SESSION_MAX_HOURS: '1',
   PREVIEW_PUBLIC_URL: '', PREVIEW_HOST: '127.0.0.1', PREVIEW_PORT: '4312', PREVIEW_LOCAL_ONLY: '0',
-  PUBLIC_URL: '', E2B_API_KEY: '', E2B_TEMPLATE_ID: '', GITHUB_APP_ID: '', GITHUB_APP_SLUG: '',
+  PUBLIC_URL: '', E2B_API_KEY: '', E2B_TEMPLATE_ID: '', ENVIRONMENT_PROFILES_FILE: '', GITHUB_APP_ID: '', GITHUB_APP_SLUG: '',
   GITHUB_CLIENT_ID: '', GITHUB_CLIENT_SECRET: '', GITHUB_APP_PRIVATE_KEY: '', GITHUB_APP_PRIVATE_KEY_FILE: '', ALLOWED_GITHUB_IDS: '',
 };
 const fields = [...Object.keys(defaults), 'ENCRYPTION_KEY'];
@@ -24,6 +25,12 @@ function validatePublicUrl(value: string) {
   let valid = false;
   try { const url = new URL(value); valid = (value === url.origin || value === url.origin + '/') && url.protocol === 'https:' && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash && !url.hostname.includes(':') && !/^\d+\.\d+\.\d+\.\d+$/.test(url.hostname) && url.hostname !== 'localhost' && !url.hostname.endsWith('.localhost') && url.hostname.includes('.'); } catch { /* sanitized below */ }
   if (!valid) fail('PUBLIC_URL must be a public HTTPS origin without a path, query, or credentials');
+}
+
+function validateEnvironmentProfilesPath(value: string | undefined) {
+  if (value && (value.length > 4096 || !isAbsolute(value) || resolve(value) !== value || /[\p{Cc}\p{Cf}]/u.test(value))) {
+    fail('ENVIRONMENT_PROFILES_FILE must be a canonical absolute file path without control characters');
+  }
 }
 
 async function inspect(path: string, kind: 'file' | 'directory', privateMode = true) {
@@ -115,6 +122,7 @@ async function snapshot(workspace: string) {
   } finally { await handle.close(); }
 }
 async function checkDefaults(values: Record<string, string>, complete = false) {
+  validateEnvironmentProfilesPath(values.ENVIRONMENT_PROFILES_FILE);
   for (const key of fixed) if ((Object.hasOwn(values, key) || complete) && values[key] !== defaults[key]) fail(`Local configuration conflicts with required ${key}; resolve it explicitly`);
   if (values.PORT !== undefined && (!/^[1-9]\d*$/.test(values.PORT) || Number(values.PORT) > 65535)) fail('PORT must be a valid TCP port');
   if (Object.hasOwn(values, 'ENCRYPTION_KEY') && !/^[A-Za-z0-9+/]{43}=$/.test(values.ENCRYPTION_KEY)) fail('ENCRYPTION_KEY must contain a 32-byte base64 key; existing key was preserved');
@@ -152,8 +160,9 @@ export async function readLocalConfig(workspace: string): Promise<Record<string,
 /** Fill a known blank setting atomically; refuse different existing values and key rotation. */
 export async function setLocalConfigValue(workspace: string, key: string, value: string, options: { expectedContent?: string } = {}): Promise<void> {
   if (!Object.hasOwn(defaults, key) || fixed.includes(key)) fail('This local configuration setting cannot be changed by setup');
+  if (key === 'ENVIRONMENT_PROFILES_FILE') validateEnvironmentProfilesPath(value);
   if (key === 'PUBLIC_URL' && value) validatePublicUrl(value);
-  if (key === 'E2B_TEMPLATE_ID' && value && (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) || value.startsWith('e2b_'))) fail('E2B_TEMPLATE_ID must contain a template ID, not an API key');
+  if (key === 'E2B_TEMPLATE_ID' && value && !isEnvironmentTemplateRef(value)) fail('E2B_TEMPLATE_ID must contain a safe template ID or alias, optionally namespace/alias:tag; credentials are not allowed');
   if (key === 'GITHUB_APP_ID' && value && !/^[1-9]\d*$/.test(value)) fail('GITHUB_APP_ID must be a positive numeric ID');
   if (key === 'GITHUB_APP_SLUG' && value && !/^[a-z0-9][a-z0-9-]*$/.test(value)) fail('GITHUB_APP_SLUG must be a GitHub App slug');
   if (key === 'ALLOWED_GITHUB_IDS' && value && !/^\d+(?:\s*,\s*\d+)*$/.test(value)) fail('ALLOWED_GITHUB_IDS must contain numeric GitHub identities');
@@ -204,6 +213,7 @@ export async function validateLocalConfig(workspace: string): Promise<{ values: 
 }
 /** Build a minimal child environment, explicitly blocking supplemental .env configuration. */
 export function localChildEnvironment(values: Record<string, string>, inherited: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  validateEnvironmentProfilesPath(values.ENVIRONMENT_PROFILES_FILE);
   const env: NodeJS.ProcessEnv = {};
   for (const key of ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SystemRoot', 'SYSTEMROOT', 'COMSPEC', 'PATHEXT']) if (inherited[key] !== undefined) env[key] = inherited[key];
   for (const key of [...fields, ...environmentBlockers]) env[key] = fields.includes(key) ? values[key] ?? '' : '';

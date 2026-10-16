@@ -17,6 +17,7 @@ import { createPreviewViewer } from '../../server/application-preview-viewer.js'
 import { PreviewProvider, previewCredentials } from '../../server/preview.js';
 import type { ApplicationPreview, PreviewGrant } from '../../server/application-preview.js';
 import type { Config } from '../../server/config.js';
+import { loadEnvironmentCatalog } from '../../server/environments.js';
 import type { Session } from '../../server/contracts.js';
 
 const directory = await mkdtemp(join(tmpdir(), 'ep-upgrade-reset-'));
@@ -24,6 +25,7 @@ const controlOrigin = 'https://control.example.test';
 const generation = '12345678-1234-1234-1234-123456789abc';
 const viewerOrigin = `http://${generation}.localhost:4358`;
 const config: Config = {
+  environmentProfiles: loadEnvironmentCatalog({ mode: 'live', templateId: 'synthetic' }),
   mode: 'live', port: 4357, publicUrl: controlOrigin, secure: true, sessionMaxHours: 1,
   previewPublicUrl: null, previewPort: 4358, previewHost: '127.0.0.1', previewLocalOnly: true,
   host: '127.0.0.1', missing: [], databaseUrl: undefined, dataDir: directory,

@@ -44,7 +44,10 @@ Launch from a repository, keep Codex and a second shell within reach, save next-
 | --- | --- |
 | Choose light, dark or system appearance | [Appearance settings](docs/USAGE.md#choose-your-appearance) |
 | Choose a repository and start a machine | [Launch](docs/USAGE.md#launch-a-machine) |
+| Reuse prepared toolchains across fresh machines | [Environment profiles](docs/ENVIRONMENTS.md) |
+| Check machine resources and estimated compute cost | [Resources and compute estimates](docs/RESOURCE-COSTS.md) |
 | Switch shells, enlarge the terminal and search output | [Terminal controls](docs/USAGE.md#keep-codex-and-a-second-shell-within-reach) |
+| Browse, edit and create text files without terminal commands | [Workspace file editor](docs/WORKSPACE-FILES.md) |
 | Save context for the next session | [Handoff notes](docs/USAGE.md#save-a-next-session-handoff) |
 | Find an earlier task without losing active work | [Session history](docs/USAGE.md#find-earlier-work) |
 | Stop a machine and inspect each cleanup outcome | [Cleanup](docs/USAGE.md#stop-and-check-cleanup) |

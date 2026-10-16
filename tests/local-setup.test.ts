@@ -53,7 +53,7 @@ describe('local live setup command boundary', () => {
     expect(await runLocalSetup(['get', 'PORT'], f.deps)).toBe(0); expect(f.output).toEqual(['4316']);
   });
   it('refuses malformed public values without printing them', async () => {
-    for (const [key, value] of [['PUBLIC_URL', 'https://user:PRIVATE@example.com'], ['E2B_TEMPLATE_ID', 'e2b_PRIVATE-API-KEY'], ['PORT', 'PRIVATE']]) {
+    for (const [key, value] of [['PUBLIC_URL', 'https://user:PRIVATE@example.com'], ['E2B_TEMPLATE_ID', 'e2b_PRIVATE-API-KEY'], ['E2B_TEMPLATE_ID', 'team/sk-PRIVATE:release-1'], ['E2B_TEMPLATE_ID', 'template:ghp_PRIVATE'], ['E2B_TEMPLATE_ID', 'team/nested/template:v1'], ['E2B_TEMPLATE_ID', 'template:release..1'], ['E2B_TEMPLATE_ID', 'template:v1\n'], ['E2B_TEMPLATE_ID', 'template:v1\u200b'], ['E2B_TEMPLATE_ID', 'https://private.example/template:v1'], ['E2B_TEMPLATE_ID', '../template:v1'], ['E2B_TEMPLATE_ID', 'template:$(touch)'], ['PORT', 'PRIVATE']]) {
       const f = fixture({ [key]: value });
       await expect(runLocalSetup(['get', key], f.deps)).rejects.toThrow('malformed'); expect(f.output).toEqual([]);
     }

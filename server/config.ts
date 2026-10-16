@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { previewBaseOrigin } from '../shared/preview-origin.js';
+import { loadEnvironmentCatalog } from './environments.js';
 
 /** Only fixed validation messages and known environment names are safe to print. */
 export class ConfigurationError extends Error {
@@ -63,7 +64,11 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env) {
   if (Buffer.from(encryptionKey, 'base64').length !== 32) throw new ConfigurationError('ENCRYPTION_KEY must encode exactly 32 random bytes in base64');
   const allowedIds = new Set((env.ALLOWED_GITHUB_IDS || '').split(',').map(s => s.trim()).filter(Boolean));
   if ([...allowedIds].some(id => !/^\d+$/.test(id))) throw new ConfigurationError('ALLOWED_GITHUB_IDS must contain numeric GitHub user IDs');
+  let environmentProfiles;
+  try { environmentProfiles = loadEnvironmentCatalog({ mode: mode as 'live' | 'preview', templateId: env.E2B_TEMPLATE_ID || '', profilesFile: env.ENVIRONMENT_PROFILES_FILE }); }
+  catch { throw new ConfigurationError('Environment profiles configuration is invalid. Use a bounded catalog with safe text and release-tagged template references.'); }
   return {
+    environmentProfiles,
     mode: mode as 'live' | 'preview', port, publicUrl, secure: url.protocol === 'https:', sessionMaxHours: sessionMaxHours as 1 | 4,
     previewPublicUrl, previewPort, previewHost, previewLocalOnly,
     host: mode === 'preview' ? '127.0.0.1' : (env.HOST || '127.0.0.1'), missing,

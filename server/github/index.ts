@@ -1,3 +1,5 @@
+import { authorizeGitHubLaunch, resolveGitHubLaunch } from './launch.js';
+import { parseGitHubLaunchUrl } from '../../shared/github-launch.js';
 import type { Database, GatewayCredentials, Session } from '../contracts.js';
 import { GitHubAPI, type Repo } from './api.js';
 import { GitGateway, type GateOptions } from './gateway.js';
@@ -30,6 +32,8 @@ export async function createGitHubServices(options: GitHubOptions) {
   };
   return {
     credentials,
+    githubLaunchPreview: (url: string, token: string) => resolveGitHubLaunch(api, url, token),
+    authorizeGitHubLaunch: (url: string, token: string) => authorizeGitHubLaunch(api, parseGitHubLaunchUrl(url), token),
     router: gateway.router,
     repositories: (userAccessToken: string): Promise<Repo[]> => api.repositories(userAccessToken),
     branches: (userAccessToken: string, installationId: number, repositoryId: number) => api.branches(userAccessToken, installationId, repositoryId),

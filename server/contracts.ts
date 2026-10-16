@@ -1,3 +1,7 @@
+import type { EnvironmentProfile } from '../shared/environments.js';
+import type { GitHubLaunchSource } from '../shared/github-launch.js';
+import type { SessionResourceSnapshot } from '../shared/resource-visibility.js';
+import type { WorkspaceDirectory, WorkspaceFile, WriteWorkspaceFileInput } from '../shared/workspace-files.js';
 import type { WorkStatus } from './workspace-status.js';
 import type { WorkspaceChanges } from './workspace-changes.js';
 
@@ -19,13 +23,15 @@ export interface Session {
   cleanup: { vm: CleanupState; github: CleanupState; gateway: CleanupState; codex: CleanupState };
   codexRemoteRevocation: 'unverified';
   continuation?: SessionContinuation;
+  launchSource?: GitHubLaunchSource;
+  environment?: EnvironmentProfile;
   label?: string;
 }
 export interface SessionEvent { id: string; sessionId: string; at: string; kind: string; message: string }
 export interface SessionEventPageOptions { limit?: number; before?: string }
 export interface SessionEventPage { events: SessionEvent[]; nextCursor: string | null }
 export interface RetryState { attempts: number; nextAt: string; state: 'health' | 'cleanup' }
-export interface CreateSessionInput { userId: string; repository: string; repositoryId: number; installationId: number; baseBranch: string; continuation?: SessionContinuation }
+export interface CreateSessionInput { userId: string; repository: string; repositoryId: number; installationId: number; baseBranch: string; continuation?: SessionContinuation; launchSource?: GitHubLaunchSource; environment?: EnvironmentProfile }
 export interface TerminalConnection {
   write(data: string): Promise<void>; resize(cols: number, rows: number): Promise<void>; disconnect(): Promise<void>;
   /** Reports PTY exit or transport loss; an already ended attachment replays on registration. */
@@ -37,6 +43,10 @@ export type TerminalShellState = 'open' | 'closed' | 'unknown';
 /** Server-only transport credentials. Never serialize this target into an API response. */
 export interface PreviewTarget { origin: string; headers: Record<string, string> }
 export interface SandboxProvider {
+  inspectResources?(session: Session, signal?: AbortSignal): Promise<SessionResourceSnapshot>;
+  listFiles?(session: Session, path: string): Promise<WorkspaceDirectory>;
+  readFile?(session: Session, path: string): Promise<WorkspaceFile>;
+  writeFile?(session: Session, input: WriteWorkspaceFileInput): Promise<WorkspaceFile>;
   previewTarget?(session: Session, port: number, signal?: AbortSignal): Promise<PreviewTarget>;
   ensureShell?(session: Session, shellId: string): Promise<TerminalShellState>;
   recoverPrimaryShell?(session: Session): Promise<TerminalShellState>;

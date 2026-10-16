@@ -1,3 +1,7 @@
+import { isEnvironmentRef, type EnvironmentRef } from '../shared/environments.js';
+import { EnvironmentError, resolveEnvironmentRef } from './environments.js';
+import { createGitHubLaunchController, GitHubLaunchError } from './github-launch.js';
+import { validGitHubBranch } from '../shared/github-launch.js';
 import { previewFormSource } from '../shared/preview-origin.js';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createServer } from 'node:http';
@@ -26,6 +30,10 @@ import { PublishedChangesError, validatePublishedChangesQuery, type PublishedCha
 import type { WorkStatus } from './workspace-status.js';
 import { isChangePath, type WorkspaceChanges } from './workspace-changes.js';
 import { createChangeInspectionGate } from './changes.js';
+import { createFileOperationGate } from './file-operations.js';
+import { createResourceObservationController, ResourceObservationError } from './resource-observation.js';
+import { parseSessionResourceSnapshot, unavailableResourceSnapshot } from './resource-visibility.js';
+import { FileOperationError, parseWorkspaceDirectory, parseWorkspaceFile, validateWorkspacePath, validateWorkspaceWrite } from './workspace-files.js';
 import { createApplicationPreview, ApplicationPreviewError, previewRunning } from './application-preview.js';
 import { createPreviewViewer } from './application-preview-viewer.js';
 import { createPreviewTokenStore } from './application-preview-secrets.js';
@@ -39,9 +47,12 @@ import type { Config } from './config.js';
 import type { Identity, SandboxProvider, Session, TerminalConnection } from './contracts.js';
 
 export class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
-const sessionInput = z.object({ repositoryId: z.number().int().positive(), installationId: z.number().int().positive(), baseBranch: z.string().min(1).max(240).refine(s => !/[\x00-\x20\x7f~^:?*\[\\]/.test(s) && !s.includes('..') && !s.includes('@{') && !s.startsWith('-') && !s.startsWith('/') && !s.endsWith('/') && !s.endsWith('.') && s.split('/').every(p => p && !p.startsWith('.') && !p.endsWith('.lock')), 'Invalid branch name') }).strict();
+const environmentInput = z.custom<EnvironmentRef>(isEnvironmentRef, 'Invalid environment selection').optional();
+const sessionInput = z.object({ environment: environmentInput, repositoryId: z.number().int().positive(), installationId: z.number().int().positive(), baseBranch: z.string().min(1).max(240).refine(s => !/[\x00-\x20\x7f~^:?*\[\\]/.test(s) && !s.includes('..') && !s.includes('@{') && !s.startsWith('-') && !s.startsWith('/') && !s.endsWith('/') && !s.endsWith('.') && s.split('/').every(p => p && !p.startsWith('.') && !p.endsWith('.lock')), 'Invalid branch name') }).strict();
 const prInput = z.object({ title: z.string().trim().min(1).max(240), body: z.string().max(20_000).optional(), expectedHeadSha: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i), expectedBaseSha: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i) }).strict();
-const continueInput = z.object({ expectedHeadSha: z.string().regex(/^[a-f0-9]{40}$/i), requestId: z.string().uuid(), expectedNoteRevision: z.number().int().min(0).max(2147483646).optional() }).strict();
+const continueInput = z.object({ environment: environmentInput, expectedHeadSha: z.string().regex(/^[a-f0-9]{40}$/i), requestId: z.string().uuid(), expectedNoteRevision: z.number().int().min(0).max(2147483646).optional() }).strict();
+const githubLaunchPreviewInput = z.object({ url: z.string().min(1).max(2048) }).strict();
+const githubLaunchInput = githubLaunchPreviewInput.extend({ environment: environmentInput, expectedRepositoryId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), expectedInstallationId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), expectedCommitSha: z.string().regex(/^[a-f0-9]{40}$/i), expectedBaseBranch: z.string().refine(validGitHubBranch), requestId: z.string().uuid() }).strict();
 const labelText = (name: string, minimum = 1) => z.string()
   .refine(s => !/[\u0000-\u001f\u007f-\u009f]/.test(s), `${name} cannot contain control characters`)
   .refine(s => !/[\uD800-\uDFFF]/u.test(s), `${name} must contain valid Unicode`)
@@ -56,7 +67,10 @@ const setupInput = z.object({ label: labelText('Label'), command: z.string().tri
 // Keep a finite transport cap, including after inflation;
 // field limits still apply independently after decoding and trimming.
 const API_JSON_BYTE_LIMIT = 256 * 1024;
-export async function createApplication(config: Config, options: { previewAuthorizationCacheMs?: number; terminalAuthorizationCacheMs?: number; shutdownTimeoutMs?: number; healthTimeoutMs?: number; terminalHeartbeatMs?: number; terminalCheckMs?: number; onFatal?: () => void } = {}) {
+// A 128 KiB file can expand sixfold when JSON escapes every ASCII byte.
+const FILE_JSON_BYTE_LIMIT = 800 * 1024;
+const isFileRequest = (req: Request) => /^(?:\/api)?\/sessions\/[^/]+\/files?\/?$/i.test(req.path);
+export async function createApplication(config: Config, options: { previewAuthorizationCacheMs?: number; terminalAuthorizationCacheMs?: number; shutdownTimeoutMs?: number; healthTimeoutMs?: number; fileOperationTimeoutMs?: number; resourceObservationTimeoutMs?: number; terminalHeartbeatMs?: number; terminalCheckMs?: number; onFatal?: () => void } = {}) {
   const production = process.env.NODE_ENV === 'production';
   if (config.mode === 'live' && !production) throw new Error('Live mode requires NODE_ENV=production');
   const db = await openDatabase(config.databaseUrl, resolve(config.dataDir, config.mode));
@@ -106,7 +120,9 @@ export async function createApplication(config: Config, options: { previewAuthor
   const manager = new SessionManager(repo, provider, github?.credentials || previewCredentials, { maxHours: config.sessionMaxHours });
   resources.push(() => manager.shutdown());
   const handoffNotes = await createHandoffNotesService(db, repo);
-  const continuation = await createContinuationController(db, repo, manager, github, id => pullRequests.list(id), handoffNotes);
+  const continuation = await createContinuationController(db, repo, manager, github, id => pullRequests.list(id), handoffNotes, config.environmentProfiles);
+  const githubLaunch = await createGitHubLaunchController(db, repo, manager, github, config.environmentProfiles);
+  resources.push(() => githubLaunch.close());
   const setup = await createSetupController(db, repo, provider, config.mode, auth.authorizeSession);
   resources.push(() => setup.close());
   function terminalTask(task: Promise<unknown>) { return work.track(task); }
@@ -127,8 +143,8 @@ export async function createApplication(config: Config, options: { previewAuthor
   resources.push(() => shells.close());
   const app = express();
   const routes = trackedRoutes(app, work);
-  app.use((_req, res, next) => {
-    if (closing || failed) { res.status(503).json({ status: 'unavailable' }); return; }
+  app.use((req, res, next) => {
+    if (closing || failed) { res.setHeader('Cache-Control', 'no-store'); res.status(503).json(isFileRequest(req) ? { error: 'Server is restarting.', code: 'unavailable' } : { status: 'unavailable' }); return; }
     next();
   });
   app.disable('x-powered-by');
@@ -154,27 +170,28 @@ export async function createApplication(config: Config, options: { previewAuthor
     } catch { res.status(503).json({ status: 'unavailable' }); }
   });
   const nonemptyJsonBodies = new WeakSet<Request>();
-  const parseApiJson = express.json({ limit: API_JSON_BYTE_LIMIT, verify: (req, _res, body) => { if (body.length) nonemptyJsonBodies.add(req as Request); } });
+  const jsonParser = (limit: number) => express.json({ limit, verify: (req, _res, body) => { if (body.length) nonemptyJsonBodies.add(req as Request); } });
+  const parseApiJson = jsonParser(API_JSON_BYTE_LIMIT), parseFileJson = jsonParser(FILE_JSON_BYTE_LIMIT);
   app.use('/api', (req, res, next) => {
     let contentType: MIMEType | undefined;
     try { if (req.headers['content-type']) contentType = new MIMEType(req.headers['content-type']); } catch { /* Let the parser handle malformed media types. */ }
     const charset = contentType?.params.get('charset');
     if (contentType?.essence === 'application/json' && charset && charset.toLowerCase() !== 'utf-8') {
-      res.status(415).json({ error: 'Unsupported JSON request encoding' }); return;
+      res.status(415).json({ error: 'Unsupported JSON request encoding', ...(isFileRequest(req) ? { code: 'invalid_encoding' } : {}) }); return;
     }
-    parseApiJson(req, res, error => {
+    (req.method === 'PUT' && isFileRequest(req) ? parseFileJson : parseApiJson)(req, res, error => {
       if (!error) { next(); return; }
       // Normalize only parser failures here: parser messages can echo request
       // contents or compression details and must never reach the generic 409.
       const type = (error as { type?: string }).type;
-      if (type === 'entity.too.large') { res.status(413).json({ error: 'JSON request body is too large' }); return; }
-      if (type === 'charset.unsupported' || type === 'encoding.unsupported') { res.status(415).json({ error: 'Unsupported JSON request encoding' }); return; }
-      res.status(400).json({ error: 'Invalid JSON request body' });
+      if (type === 'entity.too.large') { res.status(413).json({ error: 'JSON request body is too large', ...(isFileRequest(req) ? { code: 'too_large' } : {}) }); return; }
+      if (type === 'charset.unsupported' || type === 'encoding.unsupported') { res.status(415).json({ error: 'Unsupported JSON request encoding', ...(isFileRequest(req) ? { code: 'invalid_encoding' } : {}) }); return; }
+      res.status(400).json({ error: 'Invalid JSON request body', ...(isFileRequest(req) ? { code: 'invalid_request' } : {}) });
     });
   });
   app.use('/api', (req, res, next) => {
-    if (!isSameOrigin(req, config.publicUrl)) { res.status(403).json({ error: 'Cross-origin requests are not permitted' }); return; }
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers['x-ephemeral-request'] !== '1') { res.status(403).json({ error: 'Missing request verification header' }); return; }
+    if (!isSameOrigin(req, config.publicUrl)) { res.status(403).json({ error: 'Cross-origin requests are not permitted', ...(isFileRequest(req) ? { code: 'access_denied' } : {}) }); return; }
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers['x-ephemeral-request'] !== '1') { res.status(403).json({ error: 'Missing request verification header', ...(isFileRequest(req) ? { code: 'access_denied' } : {}) }); return; }
     next();
   });
   const previewIdentity: Identity & { accessToken: string } = { id: 'preview-user', login: 'local-preview', avatarUrl: '', accessToken: '' };
@@ -191,11 +208,20 @@ export async function createApplication(config: Config, options: { previewAuthor
     const user = await identity(req);
     res.json({ user: user && { id: user.id, login: user.login, avatarUrl: user.avatarUrl }, mode: config.mode, sessionMaxHours: config.sessionMaxHours, configured: config.missing.length === 0, missing: config.missing, githubInstallUrl: config.githubAppSlug ? `https://github.com/apps/${encodeURIComponent(config.githubAppSlug)}/installations/new` : null });
   });
+  routes.get('/api/environments', async (req, res) => { await requireIdentity(req); res.json(config.environmentProfiles); });
   routes.get('/api/repositories', async (req, res) => { const user = await requireIdentity(req); res.json(github ? await github.repositories(user.accessToken) : previewRepositories); });
   routes.get('/api/repositories/:installationId/:repositoryId/branches', async (req, res) => {
     const user = await requireIdentity(req);
     const installationId = z.coerce.number().int().positive().parse(req.params.installationId); const repositoryId = z.coerce.number().int().positive().parse(req.params.repositoryId);
     res.json(github ? await github.branches(user.accessToken, installationId, repositoryId) : [{ name: 'main' }, { name: 'develop' }]);
+  });
+  routes.post('/api/github-launch/preview', async (req, res) => {
+    const user = await requireIdentity(req), input = githubLaunchPreviewInput.parse(req.body);
+    res.json(await githubLaunch.preview(user.id, user.accessToken, input.url));
+  });
+  routes.post('/api/github-launch', async (req, res) => {
+    const user = await requireIdentity(req), input = githubLaunchInput.parse(req.body);
+    res.status(202).json(await githubLaunch.launch(user.id, user.accessToken, input.url, input.expectedCommitSha, input.expectedBaseBranch, input.requestId, input.expectedRepositoryId, input.expectedInstallationId, input.environment));
   });
   routes.get('/api/sessions', async (req, res) => { const user = await requireIdentity(req); res.json(await manager.list(user.id)); });
   routes.post('/api/sessions', async (req, res) => {
@@ -204,7 +230,9 @@ export async function createApplication(config: Config, options: { previewAuthor
     const selected = available.find(r => r.id === input.repositoryId && r.installationId === input.installationId);
     if (!selected) throw new HttpError(403, 'Repository is not authorized for this account');
     if (github) { const branches = await github.branches(user.accessToken, input.installationId, input.repositoryId); if (!branches.some(b => b.name === input.baseBranch)) throw new HttpError(400, 'Base branch does not exist'); }
-    const session = await manager.create({ ...input, repository: selected.fullName, userId: user.id });
+    const { environment: ref, ...legacy } = input;
+    const environment = ref === undefined ? undefined : resolveEnvironmentRef(config.environmentProfiles, ref);
+    const session = await manager.create({ ...legacy, ...(environment ? { environment } : {}), repository: selected.fullName, userId: user.id });
     res.status(202).json(session);
   });
   routes.get('/api/sessions/:id', async (req, res) => res.json(await owned(req)));
@@ -244,7 +272,7 @@ export async function createApplication(config: Config, options: { previewAuthor
   });
   routes.post('/api/sessions/:id/continue', async (req, res) => {
     const user = await requireIdentity(req); const source = await owned(req); const input = continueInput.parse(req.body);
-    res.status(202).json(await continuation.continue(source, user.accessToken, input.expectedHeadSha, input.requestId, input.expectedNoteRevision));
+    res.status(202).json(await continuation.continue(source, user.accessToken, input.expectedHeadSha, input.requestId, input.expectedNoteRevision, input.environment));
   });
   routes.post('/api/sessions/:id/stop', async (req, res) => { const s = await owned(req); await applicationPreview.revoke(s.id); setup.stopSession(s.id); res.json(await manager.stop(s.id)); });
   routes.post('/api/sessions/:id/retry-cleanup', async (req, res) => { const s = await owned(req); res.json(await manager.retryCleanup(s.id)); });
@@ -343,6 +371,71 @@ export async function createApplication(config: Config, options: { previewAuthor
       return applicationPreview.open(current, hash);
     }));
   });
+  const resourceObservations = createResourceObservationController(options.resourceObservationTimeoutMs);
+  resources.push(() => resourceObservations.close());
+  routes.get('/api/sessions/:id/resources', async (req, res) => {
+    const query = new URL(req.originalUrl, config.publicUrl).searchParams;
+    if ([...query.keys()].length || nonemptyJsonBodies.has(req) || Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding']) {
+      throw new HttpError(400, 'Resource inspection accepts no query parameters or request body.');
+    }
+    const user = await requireIdentity(req), session = await owned(req);
+    const available = (s: Session) => running(s) && Number.isFinite(Date.parse(s.maxExpiresAt)) && Date.parse(s.maxExpiresAt) > Date.now() && s.endedAt === null;
+    const unavailable = () => unavailableResourceSnapshot('Resource information is available only for the current running session. Historical usage was not retained.');
+    if (!available(session)) { res.json(unavailable()); return; }
+    const controller = new AbortController();
+    const disconnected = () => { if (!res.writableEnded) controller.abort(); };
+    req.once('aborted', disconnected); res.once('close', disconnected);
+    try {
+      const result = await resourceObservations.observe(user.id, session.id, async signal => {
+        const current = async () => {
+          signal.throwIfAborted(); checkOpen();
+          const signedIn = await requireIdentity(req);
+          signal.throwIfAborted();
+          if (signedIn.id !== user.id || signedIn.accessToken !== user.accessToken) throw new HttpError(401, 'Sign in again before inspecting resources.');
+          const latest = await owned(req);
+          signal.throwIfAborted(); checkOpen();
+          return available(latest) && sameTerminalSession(session, latest) && latest.state === session.state && latest.expiresAt === session.expiresAt && latest.maxExpiresAt === session.maxExpiresAt && latest.endedAt === session.endedAt ? latest : null;
+        };
+        const authorize = async () => {
+          const latest = await current();
+          if (!latest) return null;
+          if (config.mode === 'live') {
+            try { await github!.authorizeContinuation(latest, user.accessToken, signal); }
+            catch { signal.throwIfAborted(); throw new HttpError(403, 'Repository access could not be verified. Check access and retry.'); }
+          }
+          return current();
+        };
+        const authorized = await authorize();
+        if (!authorized) return unavailable();
+        let observation: unknown;
+        try {
+          if (!provider.inspectResources) throw new Error('Resource inspection is unavailable');
+          observation = await provider.inspectResources(authorized, signal);
+        } catch {
+          signal.throwIfAborted();
+          observation = unavailableResourceSnapshot('Resource information could not be verified. Refresh to retry.', 'unknown');
+        }
+        const verified = await authorize();
+        signal.throwIfAborted();
+        if (!verified) return unavailable();
+        // Validate freshness after the final remote check as well as projecting
+        // the explicit public fields; a slow authorization cannot stale a sample.
+        try {
+          const result = parseSessionResourceSnapshot(observation);
+          if ((result.state === 'simulation') !== (config.mode === 'preview') && (result.state === 'known' || result.state === 'simulation')) throw new Error('Unexpected resource simulation state');
+          return result;
+        } catch { return unavailableResourceSnapshot('Resource information could not be verified. Refresh to retry.', 'unknown'); }
+      }, controller.signal);
+      if (!res.destroyed && !controller.signal.aborted) res.json(result);
+    } catch (error) {
+      if (res.destroyed || req.aborted) return;
+      if (error instanceof ResourceObservationError) {
+        if (error.status === 429) { res.setHeader('Retry-After', '1'); throw new HttpError(429, error.message); }
+        res.json(unavailableResourceSnapshot('Resource information could not be verified before the inspection deadline. Refresh to retry.', 'unknown')); return;
+      }
+      throw error;
+    } finally { req.off('aborted', disconnected); res.off('close', disconnected); }
+  });
   const changeInspections = createChangeInspectionGate();
   const publishedInspections = createChangeInspectionGate();
   routes.get('/api/sessions/:id/published-changes', async (req, res) => {
@@ -418,6 +511,80 @@ export async function createApplication(config: Config, options: { previewAuthor
       res.json(verified ? changes : unavailable('The session ended during change review.'));
     } finally { release(); }
   });
+  const fileOperations = createFileOperationGate();
+  resources.push(() => { fileOperations.close(); return undefined; });
+  async function workspaceFileOperation(req: Request, res: Response, operation: 'list' | 'read' | 'write') {
+    let dispatchedWrite = false, timedOut = false;
+    try {
+      // Validate before spending repository authorization or sandbox capacity.
+      const query = new URL(req.originalUrl, config.publicUrl).searchParams;
+      const paths = query.getAll('path');
+      if ([...query.keys()].some(key => key !== 'path') || paths.length > 1 || (operation === 'write' && paths.length) || (operation === 'read' && paths.length !== 1)) {
+        throw new FileOperationError(400, 'invalid_request');
+      }
+      const input = operation === 'write' ? validateWorkspaceWrite(req.body) : undefined;
+      const path = input?.path ?? validateWorkspacePath(paths[0] ?? '', operation === 'list');
+      const user = await requireIdentity(req), session = await owned(req);
+      const release = fileOperations.acquire(user.id, session.id);
+      if (!release) { res.setHeader('Retry-After', '1'); throw new FileOperationError(429, 'busy'); }
+      const guard = () => { checkOpen(); if (timedOut || req.aborted || res.destroyed) throw new FileOperationError(503, 'unavailable'); };
+      const current = async () => {
+        guard();
+        const identityNow = await requireIdentity(req);
+        guard();
+        if (identityNow.id !== user.id || identityNow.accessToken !== user.accessToken) throw new HttpError(401, 'Sign in again before accessing workspace files.');
+        const latest = await owned(req);
+        guard();
+        if (!running(latest) || !Number.isFinite(Date.parse(latest.maxExpiresAt)) || Date.parse(latest.maxExpiresAt) <= Date.now() || !sameTerminalSession(session, latest)) throw new FileOperationError(503, 'session_unavailable');
+        return latest;
+      };
+      const authorize = async () => {
+        const latest = await current();
+        if (config.mode !== 'preview') {
+          try { await auth.authorizeSession(latest); }
+          catch { throw new FileOperationError(403, 'access_denied'); }
+        }
+        return current();
+      };
+      const task = work.track((async () => {
+        const latest = await authorize();
+        const method = operation === 'list' ? provider.listFiles : operation === 'read' ? provider.readFile : provider.writeFile;
+        if (!method) throw new FileOperationError(503, 'unavailable');
+        guard();
+        let result, operationError: unknown;
+        try {
+          if (operation === 'write') { dispatchedWrite = true; result = await provider.writeFile!(latest, input!); }
+          else if (operation === 'list') result = await provider.listFiles!(latest, path);
+          else result = await provider.readFile!(latest, path);
+        } catch (error) {
+          // A typed rejection is a confirmed provider result; arbitrary SDK
+          // failures can happen after the file has already been replaced.
+          if (error instanceof FileOperationError) {
+            if ([400, 404, 409, 413, 415].includes(error.status)) dispatchedWrite = false;
+            operationError = error;
+          } else operationError = new FileOperationError(503, operation === 'write' ? 'outcome_unknown' : 'unavailable');
+        }
+        await authorize();
+        if (operationError) throw operationError;
+        const parsed = operation === 'list' ? parseWorkspaceDirectory(result) : parseWorkspaceFile(result);
+        if (parsed.path !== path || parsed.simulation !== (config.mode === 'preview')) throw new FileOperationError(503, 'unavailable');
+        guard();
+        return parsed;
+      })().finally(release));
+      try { res.json(await beforeDeadline(task, options.fileOperationTimeoutMs ?? 30_000)); }
+      catch (error) { timedOut = true; throw error; }
+    } catch (error) {
+      if (res.destroyed || res.headersSent) return;
+      const known = error instanceof FileOperationError;
+      const status = known || error instanceof HttpError ? error.status : 503;
+      const code = known ? error.code : error instanceof HttpError ? (error.status === 401 ? 'identity_required' : error.status === 404 ? 'not_found' : 'unavailable') : dispatchedWrite ? 'outcome_unknown' : 'unavailable';
+      const message = code === 'outcome_unknown' ? 'The save result could not be confirmed. Reload the file before retrying.' : code === 'identity_required' ? 'Sign in again to access workspace files.' : code === 'not_found' ? 'Session or file not found.' : known ? error.message : 'Workspace files are unavailable. Refresh to retry.';
+      res.status(status).json({ error: message, code, ...(dispatchedWrite ? { outcome: 'unknown' } : {}) });
+    }
+  }
+  routes.get('/api/sessions/:id/files', async (req, res) => workspaceFileOperation(req, res, 'list'));
+  routes.get('/api/sessions/:id/file', async (req, res) => workspaceFileOperation(req, res, 'read'));
+  routes.put('/api/sessions/:id/file', async (req, res) => workspaceFileOperation(req, res, 'write'));
   routes.get('/api/sessions/:id/shells', async (req, res) => res.json(await shells.list(await owned(req))));
   routes.post('/api/sessions/:id/shells', async (req, res) => { const s = await owned(req); const { requestId, name } = shellCreateInput.parse(req.body); res.json(await shells.create(s, requestId, name)); });
   routes.post('/api/sessions/:id/shells/codex/recover', async (req, res) => {
@@ -644,12 +811,14 @@ export async function createApplication(config: Config, options: { previewAuthor
     if (res.headersSent) return;
     if (error instanceof SyntaxError && (error as SyntaxError & { type?: string }).type === 'entity.parse.failed') { res.status(400).json({ error: 'Invalid JSON request body' }); return; }
     if (error instanceof z.ZodError) { res.status(400).json({ error: error.issues.map(i => i.message).join('; ') }); return; }
+    if (error instanceof EnvironmentError) { res.status(error.status).json({ error: error.message }); return; }
     if (error instanceof HttpError) { res.status(error.status).json({ error: error.message }); return; }
     if (error instanceof PublishedChangesError) { res.status(error.status).json({ error: error.message, code: error.code }); return; }
     if (error instanceof HandoffNotesError) { res.status(error.status).json({ error: error.message, ...(error.code ? { code: error.code } : {}) }); return; }
     if (error instanceof ShellError) { res.status(error.status).json({ error: error.message }); return; }
     if (error instanceof SetupError) { res.status(error.status).json({ error: error.message }); return; }
     if (error instanceof ApplicationPreviewError) { res.status(error.status).json({ error: error.message }); return; }
+    if (error instanceof GitHubLaunchError) { res.status(error.status).json({ error: error.message, ...(error.code ? { code: error.code, outcome: error.outcome } : {}) }); return; }
     if (error instanceof ContinuationError) { res.status(error.status).json({ error: error.message, ...(error.code ? { code: error.code, outcome: error.outcome } : {}) }); return; }
     if (error instanceof GitHubError) {
       res.status(error.status).json({ error: error.status === 409 ? error.message : 'GitHub authorization or verification failed. Check access and retry.' }); return;

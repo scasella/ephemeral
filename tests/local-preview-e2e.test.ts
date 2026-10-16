@@ -19,6 +19,7 @@ import { createPreviewViewer } from '../server/application-preview-viewer.js';
 import { previewGatewaySource, PREVIEW_DIAGNOSTIC_PATH } from '../server/infra/preview-gateway.js';
 import { digest, seal } from '../server/auth/crypto.js';
 import type { Config } from '../server/config.js';
+import { loadEnvironmentCatalog } from '../server/environments.js';
 import type { Session } from '../server/contracts.js';
 import { TerminalAttachment, type TerminalState } from '../src/terminal-connection.js';
 
@@ -290,6 +291,7 @@ beforeAll(async () => {
   });
   // Construct test-only configuration directly. Importing readConfig would load the operator's .env.
   const config: Config = configuration = { mode: 'live', port: 4310, publicUrl: 'http://127.0.0.1:4310', secure: false, sessionMaxHours: 1,
+    environmentProfiles: loadEnvironmentCatalog({ mode: 'live', templateId: 'synthetic' }),
     previewPublicUrl: 'http://localhost:4312', previewPort: 4312, previewHost: '127.0.0.1', previewLocalOnly: true,
     host: '127.0.0.1', missing: [], databaseUrl: undefined, dataDir: local.directory,
     e2bApiKey: '', e2bTemplateId: '', githubAppId: '', githubAppSlug: '', privateKey: '', githubClientId: '', githubClientSecret: '', encryptionKey: key, allowedIds: new Set(['42']) };

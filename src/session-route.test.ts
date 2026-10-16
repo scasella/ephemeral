@@ -11,8 +11,8 @@ describe('Changes navigation', () => {
     expect(readSessionRoute(before).tab).toBe('terminal');
   });
   it('keeps Changes beside Terminal and Setup and reachable by keyboard', () => {
-    expect(machineTabs.slice(0, 4)).toEqual(['terminal', 'changes', 'published', 'setup']);
-    expect(machineTabKey('ArrowRight', 'terminal')).toBe('changes'); expect(machineTabKey('ArrowLeft', 'setup')).toBe('published');
+    expect(machineTabs.slice(0, 5)).toEqual(['terminal', 'files', 'changes', 'published', 'setup']);
+    expect(machineTabKey('ArrowRight', 'terminal')).toBe('files'); expect(machineTabKey('ArrowLeft', 'setup')).toBe('published');
     expect(machineTabKey('Home', 'changes')).toBe('terminal'); expect(machineTabKey('End', 'changes')).toBe('settings');
     expect(machineTabKey('ArrowLeft', 'terminal')).toBe('settings'); expect(machineTabKey('ArrowRight', 'settings')).toBe('terminal'); expect(machineTabKey('Enter', 'changes')).toBeNull();
   });
@@ -66,5 +66,20 @@ describe('Published navigation', () => {
     expect(machineTabKey('ArrowLeft', 'published')).toBe('changes');
     expect(machineTabKey('ArrowRight', 'published')).toBe('setup');
     expect(readSessionRoute(new URL('https://workspace.test/?tab=published&tab=published')).tab).toBe('terminal');
+  });
+});
+
+
+describe('Files navigation', () => {
+  it('bookmarks the same machine and retains flags when returning from other views', () => {
+    const before = new URL(`https://workspace.test/?session=${sessionId}&tab=terminal&view=repositories&flag=keep#work`);
+    const next = sessionRouteUrl(before, navigateSessionRoute(readSessionRoute(before), { tab: 'files', view: 'machines' }));
+    expect(readSessionRoute(next)).toMatchObject({ sessionId, tab: 'files', view: 'machines' });
+    expect(next.searchParams.get('flag')).toBe('keep'); expect(next.hash).toBe('#work');
+    expect(machineTabKey('ArrowRight', 'terminal')).toBe('files');
+    expect(machineTabKey('ArrowLeft', 'changes')).toBe('files');
+    expect(machineTabKey('ArrowLeft', 'files')).toBe('terminal');
+    expect(machineTabKey('ArrowRight', 'files')).toBe('changes');
+    expect(readSessionRoute(new URL(`https://workspace.test/?session=${sessionId}&tab=files&tab=files`)).tab).toBe('terminal');
   });
 });

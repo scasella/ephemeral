@@ -21,8 +21,10 @@ The workspace and both terminal shells change together without reconnecting or c
 
 ## Launch a machine
 
+To start from a GitHub repository, branch, full commit or same-repository pull request URL, choose **Paste GitHub URL** in **New machine**, then review the resolved source before launching. See [GitHub URL launch](GITHUB-URL-LAUNCH.md) for supported links, access restrictions and safe retry behavior.
+
 1. Choose **New machine**.
-2. Select a repository available to your GitHub identity and App installation, then a base branch.
+2. Select a repository available to your GitHub identity and App installation, then a base branch and environment profile. Your browser remembers the selected profile for that repository; changed profiles need review.
 3. Review the one-hour lifetime and launch. In simulation, the action is labeled **Launch preview**; live mode uses **Launch machine**.
 
 ![New machine dialog with the synthetic ephemeral/example-app repository, main branch and one-hour lifetime](media/launch.png)
@@ -33,7 +35,11 @@ The selected machine shows its repository, work branch, state and original expir
 
 **Settings → Task name** gives the work a recognizable name for history. Reconnecting or changing views does not extend compute. Files on the machine remain disposable: commit and push changes you want to retain.
 
+Environment profiles choose a prepared toolchain for each fresh VM. **Settings → Environment profile** shows the recorded selection. Install repository dependencies with its explicitly run Setup recipe; profiles never reuse Codex sign-in or saved machine state. See [faster, repeatable environments](ENVIRONMENTS.md) to configure profiles and inspect the offline build presets.
+
 ## Keep Codex and a second shell within reach
+
+Launch reviews include a reference resource and compute estimate. A running machine's resource panel separates its observed allocation and recent utilization from estimated compute cost. Use its refresh control for a new check; missing observations do not mean zero usage. See [resources and compute estimates](RESOURCE-COSTS.md) for the pricing basis and limits.
 
 **Terminal → + Open shell** opens one named supplemental shell. In a live machine, use it for tests or a development server while the protected Codex terminal remains available. Both shells share the repository, access and expiry deadline. Simulation only demonstrates the controls.
 
@@ -51,6 +57,10 @@ Use **Focus mode** for more space and **A− / A+ / Reset** for font size. **Fin
 </details>
 
 The GIF shows the same controls as the still image: focus the supplemental shell, search its output, leave focus mode, then switch to Codex and back. **Close shell** requires confirmation and stops ordinary commands belonging to the supplemental shell; it preserves Codex. No commands execute in this demo.
+
+## Edit files without terminal commands
+
+Open **Files** in a running machine to browse folders, edit UTF-8 text or create a new file. Use **Save file** or **Ctrl+S / Cmd+S** in the editor. Drafts stay in page memory across workspace navigation, and conflicts preserve your edits when Codex has changed a file. A save writes to the disposable machine; commit and push code you want to keep. See [the file editor guide](WORKSPACE-FILES.md) for conflict recovery, file limits and the sample workspace available in local simulation.
 
 ## Save a next-session handoff
 

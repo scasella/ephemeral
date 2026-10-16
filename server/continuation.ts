@@ -1,3 +1,6 @@
+import type { EnvironmentCatalog, EnvironmentProfile, EnvironmentRef } from '../shared/environments.js';
+import { EnvironmentError } from './environments.js';
+import { allowedSavedEnvironment, matchesEnvironmentRef, sameEnvironment, selectEnvironment } from './launch-environment.js';
 import { randomUUID } from 'node:crypto';
 import type { CreateSessionInput, Database, Session, SessionRepository } from './contracts.js';
 import type { HandoffNotesService } from './handoff-notes.js';
@@ -32,11 +35,11 @@ interface ContinuationGitHub {
 interface Reservation {
   user_id: string; source_id: string; request_id: string; target_id: string; expected_sha: string;
   repository: string; repository_id: number; installation_id: number; source_branch: string; base_branch: string;
-  status: 'reserved' | 'creating' | 'rejected'; rejection_reason: string | null;
+  environment: EnvironmentProfile | null; status: 'reserved' | 'creating' | 'rejected'; rejection_reason: string | null;
 }
 interface SessionCreator { create(input: CreateSessionInput, options?: { id?: string }): Promise<Session> }
 export async function createContinuationController(db: Database, repo: SessionRepository, manager: SessionCreator,
-  github: ContinuationGitHub | null, published: (id: string) => Promise<unknown[]>, notes?: Pick<HandoffNotesService, 'reserveContinuation'>) {
+  github: ContinuationGitHub | null, published: (id: string) => Promise<unknown[]>, notes?: Pick<HandoffNotesService, 'reserveContinuation'>, environments?: EnvironmentCatalog) {
   // Reserve a unique target before session creation. This survives a lost HTTP response or a server crash.
   await db.query(`CREATE TABLE IF NOT EXISTS ephemeral_continuation_requests (
     user_id text NOT NULL, source_id text NOT NULL, request_id text NOT NULL, target_id text UNIQUE NOT NULL,
@@ -45,6 +48,7 @@ export async function createContinuationController(db: Database, repo: SessionRe
     status text NOT NULL DEFAULT 'reserved', rejection_reason text,
     PRIMARY KEY(user_id,source_id,request_id)
   )`);
+  await db.query('ALTER TABLE ephemeral_continuation_requests ADD COLUMN IF NOT EXISTS environment jsonb');
   const requests = new Map<string, Promise<void>>();
   const unavailable = (source: Session) => continuationPreview(source, 'unavailable', !github ?
     'Preview cannot verify published GitHub work or continue it in a real workspace.' :
@@ -70,14 +74,15 @@ export async function createContinuationController(db: Database, repo: SessionRe
   async function existing(row: Reservation, source: Session): Promise<Session | null> {
     if (!matchesReservation(source, row)) throw new ContinuationError(409, 'The saved continuation no longer matches its source.');
     const target = await repo.get(row.target_id);
+    if (notes && target && target.userId !== source.userId) throw new ContinuationError(404, 'Session not found');
     if (target && (target.userId !== source.userId || target.repository !== source.repository ||
       target.repositoryId !== source.repositoryId || target.installationId !== source.installationId ||
-      target.baseBranch !== source.baseBranch || target.branch !== `ephemeral/${row.target_id}` ||
+      !sameEnvironment(target.environment, row.environment) || target.baseBranch !== source.baseBranch || target.branch !== `ephemeral/${row.target_id}` ||
       target.continuation?.sourceSessionId !== source.id || target.continuation.sourceBranch !== source.branch ||
       target.continuation.commitSha.toLowerCase() !== row.expected_sha)) throw new ContinuationError(409, 'The saved continuation could not be verified.');
     return target;
   }
-  async function start(source: Session, accessToken: string, expectedHeadSha: string, requestId: string, expectedNoteRevision?: number): Promise<Session> {
+  async function start(source: Session, accessToken: string, expectedHeadSha: string, requestId: string, expectedNoteRevision?: number, environmentRef?: EnvironmentRef): Promise<Session> {
     if (!github || !canContinueSession(source)) throw new ContinuationError(409, unavailable(source).reason!);
     const expected = expectedHeadSha.toLowerCase();
     const params = [source.userId, source.id, requestId.toLowerCase()];
@@ -85,6 +90,20 @@ export async function createContinuationController(db: Database, repo: SessionRe
       'SELECT * FROM ephemeral_continuation_requests WHERE user_id=$1 AND source_id=$2 AND request_id=$3', params)).rows[0];
     // Authorization precedes copying source content, including recovery of a reserved request.
     await github.authorizeContinuation(source, accessToken);
+    const previous = await readReservation();
+    if (previous && (previous.expected_sha !== expected || !matchesEnvironmentRef(previous.environment, environmentRef))) {
+      throw new ContinuationError(409, 'This continuation request was already used for a different commit or environment.');
+    }
+    if (previous) {
+      const target = await existing(previous, source); if (target) return target;
+      if (previous.status === 'rejected') throw new ContinuationError(409, previous.rejection_reason ?? 'This continuation request was rejected. Review saved work and try again.', true);
+    }
+    let environment: EnvironmentProfile | undefined;
+    try { environment = previous ? allowedSavedEnvironment(environments, previous.environment) : selectEnvironment(environments, environmentRef); }
+    catch (error) {
+      if (!previous && error instanceof EnvironmentError) throw new ContinuationError(error.status, error.message, true);
+      throw error;
+    }
     if (notes) {
       try {
         // One database statement reserves the target and captures the note. A crash cannot
@@ -92,21 +111,21 @@ export async function createContinuationController(db: Database, repo: SessionRe
         await notes.reserveContinuation({ userId: source.userId, sourceSessionId: source.id,
           requestId: requestId.toLowerCase(), targetSessionId: randomUUID(), expectedHeadSha: expected,
           repository: source.repository, repositoryId: source.repositoryId, installationId: source.installationId,
-          sourceBranch: source.branch, baseBranch: source.baseBranch, expectedNoteRevision });
+          sourceBranch: source.branch, baseBranch: source.baseBranch, expectedNoteRevision, environment });
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'note_revision_conflict') {
-          throw new ContinuationError(409, 'The handoff notes changed. Review the current notes before continuing.', true);
+          throw new ContinuationError(409, 'The handoff notes changed. Review the current notes before continuing.', previous?.status !== 'creating');
         }
         throw error;
       }
     } else {
       await db.query(`INSERT INTO ephemeral_continuation_requests
-        (user_id,source_id,request_id,target_id,expected_sha,repository,repository_id,installation_id,source_branch,base_branch)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(user_id,source_id,request_id) DO NOTHING`,
-      [...params, randomUUID(), expected, source.repository, source.repositoryId, source.installationId, source.branch, source.baseBranch]);
+        (user_id,source_id,request_id,target_id,expected_sha,repository,repository_id,installation_id,source_branch,base_branch,environment)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb) ON CONFLICT(user_id,source_id,request_id) DO NOTHING`,
+      [...params, randomUUID(), expected, source.repository, source.repositoryId, source.installationId, source.branch, source.baseBranch, environment ? JSON.stringify(environment) : null]);
     }
     const row = await readReservation();
-    if (!row || row.expected_sha !== expected) throw new ContinuationError(409, 'This continuation request was already used for a different commit.');
+    if (!row || row.expected_sha !== expected || !matchesEnvironmentRef(row.environment, environmentRef)) throw new ContinuationError(409, 'This continuation request was already used for a different commit or environment.');
     const target = await existing(row, source);
     if (target) return target;
     if (row.status === 'rejected') throw new ContinuationError(409, row.rejection_reason ?? 'This continuation request was rejected. Review saved work and try again.', true);
@@ -126,34 +145,35 @@ export async function createContinuationController(db: Database, repo: SessionRe
     if (checked.commitSha.toLowerCase() !== expected) return reject('The published source branch changed. Refresh before continuing.');
     const current = await repo.get(source.id);
     if (!current || !sameSource(current, source) || !canContinueSession(current)) return reject('Source session cleanup is not complete.');
-    await db.query(`UPDATE ephemeral_continuation_requests SET status='creating'
-      WHERE user_id=$1 AND source_id=$2 AND request_id=$3 AND status='reserved'`, params);
+    const claim = await db.query(`UPDATE ephemeral_continuation_requests SET status='creating'
+      WHERE user_id=$1 AND source_id=$2 AND request_id=$3 AND status='reserved' RETURNING target_id`, params);
     const claimed = await readReservation();
     if (claimed?.status !== 'creating') throw new ContinuationError(409, 'The saved continuation request is no longer available.');
     try {
       return await manager.create({ userId: source.userId, repository: source.repository, repositoryId: source.repositoryId,
-        installationId: source.installationId, baseBranch: source.baseBranch,
+        installationId: source.installationId, baseBranch: source.baseBranch, ...(environment ? { environment } : {}),
         continuation: { sourceSessionId: source.id, sourceBranch: source.branch, commitSha: expected, verifiedAt: checked.checkedAt } }, { id: row.target_id });
     } catch (error) {
       // Creation may have persisted the session before a later write failed, or another server created it.
       const recovered = await existing(row, source);
       if (recovered) return recovered;
-      if (error instanceof SessionNotCreatedError) {
+      if (error instanceof SessionNotCreatedError && claim.rows.length > 0) {
         // A trusted pre-insert failure permits a retry of this same reserved target.
         // Transport/storage errors remain creating even when a recovery read is empty.
         await db.query(`UPDATE ephemeral_continuation_requests SET status='reserved'
           WHERE user_id=$1 AND source_id=$2 AND request_id=$3 AND status='creating'`, params);
         throw new ContinuationError(409, error.message, true);
       }
+      if (error instanceof SessionNotCreatedError) throw new ContinuationError(409, 'Session creation could not be confirmed. Retry this same request ID to recover the session.');
       throw error;
     }
   }
-  return { preview, continue(source: Session, accessToken: string, expectedHeadSha: string, requestId: string, expectedNoteRevision?: number) {
+  return { preview, continue(source: Session, accessToken: string, expectedHeadSha: string, requestId: string, expectedNoteRevision?: number, environmentRef?: EnvironmentRef) {
     // A database is owned by one control plane. Serialize all intents for a key,
     // including requests that attempt to change the reviewed SHA.
     const key = JSON.stringify([source.userId, source.id, requestId.toLowerCase()]);
     const previous = requests.get(key) ?? Promise.resolve();
-    const operation = previous.then(() => start(source, accessToken, expectedHeadSha, requestId, expectedNoteRevision));
+    const operation = previous.then(() => start(source, accessToken, expectedHeadSha, requestId, expectedNoteRevision, environmentRef));
     const settled = operation.then(() => {}, () => {});
     requests.set(key, settled);
     void settled.then(() => { if (requests.get(key) === settled) requests.delete(key); });

@@ -14,15 +14,36 @@ interface RemotePullRequest {
 const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 export class GitHubAPI {
   constructor(private appId: string, private privateKey: string, private appSlug: string) {}
-  async request<T>(path: string, token: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
+  async request<T>(path: string, token: string, method = 'GET', body?: unknown, signal?: AbortSignal, maxResponseBytes?: number): Promise<T> {
     signal?.throwIfAborted();
+    if (maxResponseBytes !== undefined && (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1)) throw new GitHubError('Invalid GitHub response limit.', 400);
     const response = await fetch(`https://api.github.com${path}`, {
       method, headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json', 'User-Agent': 'Ephemeral' },
       body: body === undefined ? undefined : JSON.stringify(body), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000), redirect: 'error',
     });
     if (!response.ok) throw new GitHubRequestRejectedError(`GitHub rejected the ${method} request (${response.status})`, response.status === 401 || response.status === 403 ? 403 : 502, response.status);
     if (response.status === 204) return undefined as T;
-    return await response.json() as T;
+    if (maxResponseBytes === undefined) return await response.json() as T;
+    const exceeded = () => new GitHubError('GitHub response exceeds the supported review size.', 413);
+    if (Number(response.headers.get('content-length') ?? 0) > maxResponseBytes) {
+      void response.body?.cancel().catch(() => {}); throw exceeded();
+    }
+    const reader = response.body?.getReader();
+    if (!reader) throw new GitHubError('GitHub returned an empty response.');
+    const chunks: Uint8Array[] = []; let bytes = 0;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        if (bytes > maxResponseBytes) { void reader.cancel().catch(() => {}); throw exceeded(); }
+        chunks.push(chunk.value);
+      }
+    } finally { reader.releaseLock(); }
+    signal?.throwIfAborted();
+    const joined = new Uint8Array(bytes); let offset = 0;
+    for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.byteLength; }
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(joined)) as T;
   }
   async repositories(userToken: string, signal?: AbortSignal): Promise<Repo[]> {
     const read = async <T>(path: string): Promise<T> => {

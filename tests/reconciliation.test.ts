@@ -123,7 +123,8 @@ describe('durable automatic reconciliation retries', () => {
     await service.reconcile(); await drain(service);
     expect(fake.kill).toHaveBeenCalledTimes(2);
     expect(creds.disable).toHaveBeenCalledTimes(1);
-    expect((await repo.events('cleanup')).map(event => event.kind)).toEqual(['codex_logout_unconfirmed', 'cleanup_retry']);
+    // Events can share a timestamp; UUID ordering does not imply insertion order.
+    expect((await repo.events('cleanup')).map(event => event.kind).sort()).toEqual(['cleanup_retry', 'codex_logout_unconfirmed']);
     expect(await repo.getRetryState('cleanup')).toMatchObject({ attempts: 2, state: 'cleanup' });
     fake.kill.mockImplementation(async id => { fake.live.delete(id); });
     vi.mocked(creds.revokeGitHub).mockResolvedValue();

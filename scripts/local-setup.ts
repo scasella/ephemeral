@@ -11,6 +11,7 @@ import { SetupTemplateError, verifySetupTemplate } from './local-setup-template.
 import { startRegistration, publicOrigin, type RegistrationOptions } from './register-github-app.js';
 import { GitHubAPI } from '../server/github/api.js';
 import { appJWT } from '../server/github/security.js';
+import { isEnvironmentTemplateRef } from '../shared/environments.js';
 
 const publicKeys = new Set(['PORT', 'PUBLIC_URL', 'GITHUB_APP_ID', 'GITHUB_APP_SLUG', 'ALLOWED_GITHUB_IDS', 'E2B_TEMPLATE_ID']);
 const githubKeys = ['GITHUB_APP_ID', 'GITHUB_APP_SLUG', 'GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'];
@@ -178,7 +179,7 @@ function publicValue(key: string, value: string): string {
     key === 'GITHUB_APP_ID' ? /^[1-9]\d*$/.test(value) :
     key === 'GITHUB_APP_SLUG' ? /^[a-z0-9][a-z0-9-]{0,99}$/.test(value) :
     key === 'ALLOWED_GITHUB_IDS' ? /^\d+(?:\s*,\s*\d+)*$/.test(value) :
-    key === 'E2B_TEMPLATE_ID' ? !/^e2b_/i.test(value) && /^[A-Za-z0-9][A-Za-z0-9_\/-]{0,127}(?::[A-Za-z0-9_.-]{1,64})?$/.test(value) : key === 'PUBLIC_URL';
+    key === 'E2B_TEMPLATE_ID' ? isEnvironmentTemplateRef(value) : key === 'PUBLIC_URL';
   if (!valid) throw new SetupError('Public configuration value is malformed; inspect the selected key privately. Its value was not printed.');
   if (key === 'PUBLIC_URL') { try { return publicOrigin(value); } catch { throw new SetupError('PUBLIC_URL is malformed; inspect it privately. Its value was not printed.'); } }
   return value;
