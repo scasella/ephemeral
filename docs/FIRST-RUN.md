@@ -87,6 +87,12 @@ After setup, use:
 npm run live
 ```
 
+The [illustrated usage guide](USAGE.md) shows the workspace controls and the full launch → notes → cleanup flow. Its screenshots use credential-free simulation; GitHub authorization and Codex device sign-in still happen separately in your real session.
+
+![Repository and base-branch selection in the local simulation launch dialog](media/launch.png)
+
+*Simulation example: live setup uses your installed repository and a real E2B machine. Never capture private setup files or device codes.*
+
 Open the configured public HTTPS URL. Sign in to GitHub in the browser, select an installed repository and launch a machine. In its terminal, complete the fresh Codex device sign-in and folder/trust prompts. Codex uses your eligible account and its limits. A reconnect to the same VM retains its login; a fresh VM requires a fresh login.
 
 Keep one-time device codes on the VM terminal and OpenAI sign-in page, out of chat and saved evidence. Follow [OpenAI's device sign-in instructions](https://learn.chatgpt.com/docs/auth#login-on-headless-devices). After login, `codex login status` inside the VM should report ChatGPT authentication. Complete the folder-trust prompt for your selected repository, then try “Read the README and explain this repository in three sentences; do not edit files or read credentials.” A connected shell alone does not establish model output. If the terminal disconnects, select **Reconnect**, wait for **connected**, then type or paste; input during disconnection is discarded. Only use **I received a useful response** after observing one; it records a human confirmation, not automatic login detection.

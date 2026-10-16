@@ -2,6 +2,40 @@
 
 Disposable cloud coding sessions: a fresh microVM, a fresh ChatGPT/Codex sign-in, and tightly scoped GitHub access. Stop or expire the session to destroy its compute and clean up its credentials.
 
+![Ephemeral workspace in local simulation, showing the session timer, machine tabs, Codex terminal and supplemental shell controls](docs/media/workspace.png)
+
+*Local simulation with synthetic repositories; no VM, model response or credentials. [Screenshot-led usage guide](docs/USAGE.md).*
+
+## See the workflow
+
+Launch from a repository, keep Codex and a second shell within reach, save next-session notes, and inspect cleanup when the machine ends.
+
+| Task | Walkthrough |
+| --- | --- |
+| Choose a repository and start a machine | [Launch](docs/USAGE.md#launch-a-machine) |
+| Switch shells, enlarge the terminal and search output | [Terminal controls](docs/USAGE.md#keep-codex-and-a-second-shell-within-reach) |
+| Save context for the next session | [Handoff notes](docs/USAGE.md#save-a-next-session-handoff) |
+| Find an earlier task without losing active work | [Session history](docs/USAGE.md#find-earlier-work) |
+| Stop a machine and inspect each cleanup outcome | [Cleanup](docs/USAGE.md#stop-and-check-cleanup) |
+
+<details>
+<summary>Watch: terminal Find, focus mode and shell switching</summary>
+
+![Animated simulation walkthrough: search terminal output in focus mode, then switch between Codex and a second shell](docs/media/terminal-workflow.gif)
+
+[Static terminal screenshot and written steps](docs/USAGE.md#keep-codex-and-a-second-shell-within-reach). Commands are not executed in simulation.
+
+</details>
+
+<details>
+<summary>Watch: edit, save and reload handoff notes</summary>
+
+![Animated simulation walkthrough: edit a handoff note, save its revision, then reload to see the saved text](docs/media/notes-workflow.gif)
+
+[Static notes screenshot and written steps](docs/USAGE.md#save-a-next-session-handoff). Notes persist in the control-plane database; they do not save repository files.
+
+</details>
+
 ## Release status
 
 Ephemeral is a self-hosted, invite-only pilot licensed under [MIT](LICENSE). The sanitized source and reviewed fixes are committed to `main` in the **private** GitHub repository `scasella/ephemeral`. Public publication and GitHub CI remain **pending**. No hosted public service has been deployed. The package setting `private: true` prevents accidental npm publication; it does not control GitHub repository visibility.
